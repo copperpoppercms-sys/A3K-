@@ -19,8 +19,18 @@ class Result:
     posts: list = field(default_factory=list)
     trace: list = field(default_factory=list)
     prints: list = field(default_factory=list)
+    constants: list = field(default_factory=list)
+    recon: str = ""
     error: str = ""
     changed: bool = False
+
+    @property
+    def best(self):
+        """Readable output: recovered source, or the behaviour reconstruction for vm payloads that never reach loadstring."""
+        vm = BY_NAME.get(self.engine) and BY_NAME[self.engine].vm
+        if self.recon and (not self.changed or (vm and not self.layers)):
+            return self.recon
+        return self.source
 
     @property
     def is_logger(self):
@@ -68,7 +78,8 @@ def deobfuscate(src, engine=None, dynamic=True, max_layers=8, seconds=10):
             continue
         break
     if ran is not None:
-        res.urls, res.posts, res.trace, res.prints = ran.urls, ran.posts, ran.trace, ran.prints
+        res.urls, res.posts, res.trace, res.prints, res.constants = ran.urls, ran.posts, ran.trace, ran.prints, ran.constants
+        res.recon = reconstruct(ran)
         res.error = ran.error
         if ran.timed_out:
             res.notes.append("sandbox hit wall-clock limit")
@@ -85,10 +96,10 @@ def deobfuscate(src, engine=None, dynamic=True, max_layers=8, seconds=10):
     return res
 
 
-def trace_behavior(src, seconds=10):
-    """Run in the recording sandbox and return observable behaviour as a pseudo-Luau script."""
-    src, _ = passes.run_static(src)
-    r = sandbox.run(src, seconds)
+def reconstruct(r):
+    """Observable behaviour of a sandbox run as a pseudo-Luau script."""
+    if not (r.trace or r.urls or r.constants or r.captures or r.prints or r.posts):
+        return ""
     out = ["-- reconstructed observable behaviour (api calls the script made, in order)"]
     for u in r.urls:
         out.append("-- url: " + u)
@@ -103,4 +114,14 @@ def trace_behavior(src, seconds=10):
         out.append("-- stopped: " + r.error)
     if r.timed_out:
         out.append("-- stopped: wall-clock limit")
-    return "\n".join(out), r
+    if r.constants:
+        out.append("-- decoded strings (%d):" % len(r.constants))
+        out += ["--   " + c.replace("\n", "\\n")[:200] for c in r.constants[:400]]
+    return "\n".join(out)
+
+
+def trace_behavior(src, seconds=10):
+    """Run in the recording sandbox; returns (reconstruction, Run)."""
+    src, _ = passes.run_static(src)
+    r = sandbox.run(src, seconds)
+    return reconstruct(r) or "-- nothing observable happened", r

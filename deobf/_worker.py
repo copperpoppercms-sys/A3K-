@@ -86,7 +86,48 @@ end
 for _, k in ipairs({"assert", "error", "ipairs", "next", "pairs", "pcall", "xpcall", "rawequal", "rawget", "rawset", "select", "tonumber", "tostring", "type", "unpack", "setmetatable", "getmetatable", "collectgarbage"}) do
   env[k] = _G[k]
 end
-env.string, env.table, env.math = string, table, math
+local real_str = {}
+for k, v in pairs(string) do real_str[k] = v end
+local seen_const, nconst = {}, 0
+local function note_const(r)
+  if type(r) ~= "string" or #r < 3 or #r > 4000 or seen_const[r] or nconst >= 3000 then return r end
+  local n, good = math.min(#r, 200), 0
+  for i = 1, n do
+    local b = real_str.byte(r, i)
+    if (b >= 32 and b < 127) or b == 10 or b == 9 then good = good + 1 end
+  end
+  if good / n >= 0.9 then seen_const[r] = true; nconst = nconst + 1; emit("const", r) end
+  return r
+end
+-- wrapped string/table/math: record decoded constants and add the Luau surface VM loaders probe for
+local ws, wt, wm = {}, {}, {}
+for k, v in pairs(string) do ws[k] = v end
+for k, v in pairs(table) do wt[k] = v end
+for k, v in pairs(math) do wm[k] = v end
+ws.char = function(...) local r = real_str.char(...) if select("#", ...) >= 3 then note_const(r) end return r end
+ws.gsub = function(...) local r, n = real_str.gsub(...) note_const(r) return r, n end
+ws.reverse = function(x) return note_const(real_str.reverse(x)) end
+ws.format = function(...) return note_const(real_str.format(...)) end
+ws.rep = function(x, n, ...) if type(n) == "number" and #tostring(x) * n > 1000000 then error("sandbox: string.rep too large", 0) end return real_str.rep(x, n, ...) end
+local real_concat = table.concat
+wt.concat = function(...) return note_const(real_concat(...)) end
+wt.unpack, wt.pack = unpack, function(...) return {n = select("#", ...), ...} end
+wt.find = function(t, v, init) for i = init or 1, #t do if t[i] == v then return i end end end
+wt.create = function(n, v) local t = {} if v ~= nil then for i = 1, n do t[i] = v end end return t end
+wt.clear = function(t) for k in pairs(t) do t[k] = nil end end
+wt.freeze = function(t) return t end
+wt.isfrozen = function() return false end
+wt.clone = function(t) local c = {} for k, v in pairs(t) do c[k] = v end return setmetatable(c, getmetatable(t)) end
+wt.move = function(a, f, e, t, b) b = b or a if t > f then for i = e - f, 0, -1 do b[t + i] = a[f + i] end else for i = 0, e - f do b[t + i] = a[f + i] end end return b end
+wm.clamp = function(x, lo, hi) return math.min(math.max(x, lo), hi) end
+wm.sign = function(x) return x > 0 and 1 or x < 0 and -1 or 0 end
+wm.round = function(x) return x >= 0 and math.floor(x + 0.5) or math.ceil(x - 0.5) end
+wm.noise = function() return 0 end
+getmetatable("").__index = ws
+env.string, env.table, env.math = ws, wt, wm
+env.typeof = function(v) if proxies[v] then return "Instance" end return type(v) end
+env.newproxy = function(m) local p = {} if m then setmetatable(p, {}) end return p end
+env.gcinfo = function() return collectgarbage("count") end
 env.coroutine = {
   create = function(f) local co = real_cocreate(f); sethook(co, LIMIT, "", 10000); return co end,
   wrap = function(f) local co = real_cocreate(f); sethook(co, LIMIT, "", 10000); return function(...) local r = {coroutine.resume(co, ...)}; if not r[1] then error(r[2], 0) end; return unpack(r, 2) end end,

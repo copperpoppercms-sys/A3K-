@@ -91,3 +91,22 @@ def test_numeric_getter_with_rotation_table():
 def test_bit32_is_real():
     r = sandbox.run("print(bit32.bxor(5,3),bit32.band(12,10),bit32.bor(12,10),bit32.lshift(1,4),bit32.rshift(256,4))")
     assert r.prints == ["6\t8\t14\t16\t16"]
+
+
+def test_vm_style_payload_yields_reconstruction_and_constants():
+    src = (
+        "-- This file was protected using Luraph Obfuscator v14.4.1 [https://lura.ph/]\n"
+        "local c=string.char local t={80,108,97,121,101,114,115}\n"
+        "local o={} for i=1,#t do o[i]=c(t[i]) end\n"
+        "local s=game:GetService(table.concat(o)) local h=s.LocalPlayer\n"
+        'game:GetService("StarterGui"):SetCore("SendNotification",{Title=("x"):rep(2)})'
+    )
+    r = deobfuscate(src)
+    assert r.engine == "luraph" and r.layers == 0
+    assert "Players" in r.constants
+    assert 'game:GetService("Players")' in r.best and r.best != r.source
+
+
+def test_luau_surface_available():
+    r = sandbox.run('print(typeof(game), table.find({5,6},6), math.clamp(9,0,3), #table.create(3,0), select("#",table.unpack({1,2})))')
+    assert r.prints == ["Instance\t2\t3\t3\t2"]

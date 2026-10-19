@@ -115,7 +115,7 @@ class EnginePicker(discord.ui.Select):
     async def callback(self, inter):
         await inter.response.defer(thinking=True)
         r = await _job(deobfuscate, self.raw, engine=self.values[0])
-        await inter.followup.send(embed=_summary(self.name, r), file=_file(r.source, "deobf_" + self.name))
+        await inter.followup.send(embed=_summary(self.name, r), file=_file(r.best, "deobf_" + self.name))
 
 
 class ResultView(discord.ui.View):
@@ -131,7 +131,7 @@ async def run_deobf(ctx, arg, engine=None):
     async with ctx.typing():
         results = await asyncio.gather(*[_job(deobfuscate, text, engine=engine) for _, text in items])
     for (name, raw), r in zip(items, results):
-        await ctx.reply(embed=_summary(name, r), file=_file(r.source, "deobf_" + os.path.basename(name)), view=ResultView(name, raw, r), mention_author=False)
+        await ctx.reply(embed=_summary(name, r), file=_file(r.best, "deobf_" + os.path.basename(name)), view=ResultView(name, raw, r), mention_author=False)
 
 
 @bot.command(name="deobf")
@@ -180,7 +180,7 @@ class FetchView(discord.ui.View):
     async def deob(self, inter, _):
         await inter.response.defer(thinking=True)
         r = await _job(deobfuscate, self.raw)
-        await inter.followup.send(embed=_summary(self.name, r), file=_file(r.source, "deobf_" + self.name), view=ResultView(self.name, self.raw, r))
+        await inter.followup.send(embed=_summary(self.name, r), file=_file(r.best, "deobf_" + self.name), view=ResultView(self.name, self.raw, r))
 
     @discord.ui.button(label="Env Log", emoji="🧾", style=discord.ButtonStyle.secondary)
     async def envlog(self, inter, _):
@@ -209,7 +209,7 @@ async def envlog_cmd(ctx, *, arg=""):
     name, text = pick_final(files)
     async with ctx.typing():
         r = await _job(deobfuscate, text)
-    await ctx.reply("analysed deepest capture: **%s** (%d file(s) uploaded)" % (name, len(files)), embed=_summary(name, r), file=_file(r.source, "deobf_" + name), view=ResultView(name, text, r), mention_author=False)
+    await ctx.reply("analysed deepest capture: **%s** (%d file(s) uploaded)" % (name, len(files)), embed=_summary(name, r), file=_file(r.best, "deobf_" + name), view=ResultView(name, text, r), mention_author=False)
 
 
 @bot.command(name="engines")

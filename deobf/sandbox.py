@@ -16,6 +16,7 @@ class Run:
     urls: list = field(default_factory=list)
     posts: list = field(default_factory=list)
     prints: list = field(default_factory=list)
+    constants: list = field(default_factory=list)  # decoded strings built via char/concat/gsub/format
     error: str = ""
     timed_out: bool = False
 
@@ -63,6 +64,8 @@ def run(source, seconds=10):
             r.urls.append(v)
         elif k == "post":
             r.posts.append(v)
+        elif k == "const":
+            r.constants.append(v)
         elif k == "print":
             r.prints.append(v)
         elif k == "error":

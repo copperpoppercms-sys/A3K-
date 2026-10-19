@@ -29,7 +29,7 @@ def main(argv=None):
         print("engine=%s (%d%%) layers=%d notes=%s" % (r.engine, r.confidence, r.layers, ",".join(r.notes) or "-"), file=sys.stderr)
         for f in r.findings:
             print("logger-scan [%s] line %d: %s" % (f.severity, f.line, f.desc), file=sys.stderr)
-        text = r.source
+        text = r.best
     data = text.encode("latin-1", "replace")
     if a.out:
         open(a.out, "wb").write(data)

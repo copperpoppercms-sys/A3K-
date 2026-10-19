@@ -17,14 +17,14 @@ def _e(name, label, vm, *sigs):
 
 ENGINES = [
     _e("wearedevs", "WeAreDevs", False, (r"wearedevs\.net/obfuscator", 90), (r"wearedevs", 50), (r"^\s*(?:--\[\[[^\]]*\]\]\s*)?return\s*\(\s*function\s*\(\s*\.\.\.\s*\)", 25)),
-    _e("luraph", "Luraph", True, (r"luraph", 80), (r"\bLPH[_!]", 70), (r"protected using luraph", 90)),
+    _e("luraph", "Luraph", True, (r"luraph", 80), (r"lura\.ph", 85), (r"\bLPH[_!]", 70), (r"protected using luraph", 90)),
     _e("prometheus", "Prometheus", False, (r"prometheus obfuscator", 90), (r"levno[_ ]?710", 90), (r"prometheus", 40)),
     _e("clyde", "Clyde", False, (r"\bclyde\b", 60), (r"clyde\s*(?:obfuscator|v\d)", 80)),
     _e("hercules", "Hercules", False, (r"hercules\s*(?:obfuscator|v\d|protected)", 90), (r"\bhercules\b", 55)),
     _e("moonsec", "MoonSec", True, (r"moonsec", 85), (r"protected using moonsec", 95)),
     _e("moonveil", "Moonveil", True, (r"moonveil", 85)),
     _e("goofyscator", "Goofyscator", False, (r"goofyscator", 90), (r"\bgoofy\b", 40)),
-    _e("ironbrew", "IronBrew", True, (r"ironbrew", 85), (r"\bStk\b.*\bInst\b", 35), (r"\bUpvalues\b.*\bVararg\b", 25), (r"\bStk\b", 20)),
+    _e("ironbrew", "IronBrew", True, (r"ironbrew", 85), (r"[\"']LOL!", 55), (r"\bStk\b.*\bInst\b", 35), (r"\bUpvalues\b.*\bVararg\b", 25), (r"\bStk\b", 20)),
     _e("mwp", "MWP", True, (r"\bmwp\b", 70), (r"mwp\s*obfuscator", 90)),
     _e("ironveil", "IronVeil", True, (r"ironveil", 90)),
     _e("luaobfuscator", "Luaobfuscator.com", False, (r"luaobfuscator\.com", 90), (r"luaobfuscator", 60)),
