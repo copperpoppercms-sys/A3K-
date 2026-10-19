@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from deobf import deobfuscate, detect, logger, passes, sandbox, trace_behavior
@@ -128,3 +130,32 @@ def test_extract_loader_url():
     assert extract_loader_url('loadstring(game:HttpGet("%s"))()' % u) == u
     assert extract_loader_url('print("https://example.com")') is None
     assert extract_loader_url("local a = 1") is None
+
+
+HARD = open(os.path.join(os.path.dirname(__file__), "samples", "hard_gui.lua")).read()
+
+
+def test_scheduler_callbacks_and_pcall_wait():
+    text, r = trace_behavior(HARD)
+    for line in (
+        'local v1 = Instance.new("ScreenGui")',
+        'v1.Parent = game:GetService("CoreGui")',
+        'print("tick", 3)',
+        'print("after wait inside pcall")',
+        "-- callback: v3.MouseButton1Click",
+        'game:GetService("StarterGui"):SetCore("SendNotification", {Text = "enabled", Title = "Speed", Duration = 3})',
+        'print("E pressed")',
+        'print("loop")  -- repeated',
+    ):
+        assert line in text, line
+    assert text.count("Instance.new") == 3
+
+
+def test_binary_chunks_rejected():
+    r = sandbox.run('print(loadstring("\\27Lua"))')
+    assert r.prints == ["nil\tbinary chunks are rejected"]
+
+
+def test_string_format_accepts_proxies():
+    r = sandbox.run('print(string.format("%d %s", game.Players, game))')
+    assert r.prints == ["0 game"]

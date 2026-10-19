@@ -8,8 +8,11 @@ local emit, real_loadstring, real_pcall, real_setfenv, real_clock, sethook, real
 local HTTP = rawget(_G, "__HTTP_MAP") or {}
 local env = {}
 local proxies = setmetatable({}, {__mode = "k"})
-local ntrace = 0
+local ntrace, tcount = 0, {}
 local function T(s)
+  local c = (tcount[s] or 0) + 1
+  tcount[s] = c
+  if c > 3 then return end
   ntrace = ntrace + 1
   if ntrace <= 4000 then emit("trace", s) end
 end
@@ -52,6 +55,8 @@ local function call_text(name, args)
   local shown = base and (base .. sep .. meth) or name
   return shown .. "(" .. table.concat(parts, ", ") .. ")"
 end
+local callbacks, nvar = {}, 0
+local function eq_true() return true end
 mk = function(name)
   local p = {}
   proxies[p] = name
@@ -63,10 +68,25 @@ mk = function(name)
     __newindex = function(_, k, v) T(name .. "." .. tostring(k) .. " = " .. q(v)) end,
     __call = function(_, ...)
       local args = table.pack and table.pack(...) or {n = select("#", ...), ...}
-      local text = call_text(name, args)
-      T(text)
-      note_urls(args)
       local m = name:match("([^.]+)$")
+      if m == "Connect" or m == "connect" or m == "Once" or m == "ConnectParallel" then
+        local fn
+        for i = 1, args.n do if type(args[i]) == "function" then fn = args[i] break end end
+        local sig = name:match("^(.*)%.[^.]+$") or name
+        T(sig .. ":" .. m .. "(function(...) end)")
+        if fn and #callbacks < 60 then callbacks[#callbacks + 1] = {fn = fn, label = sig} end
+        return mk(sig .. ":" .. m .. "()")
+      end
+      local text = call_text(name, args)
+      note_urls(args)
+      local owner = name:match("^(.*)%.[^.]+$")
+      if (m == "new" and (owner == "Instance" or owner == "Drawing")) or m == "Clone" then
+        nvar = nvar + 1
+        local v = "v" .. nvar
+        T("local " .. v .. " = " .. text)
+        return mk(v)
+      end
+      T(text)
       if m == "HttpGet" or m == "HttpGetAsync" then
         local url = args[1]
         if proxies[url] then url = args[2] end
@@ -84,12 +104,13 @@ mk = function(name)
     __add = function() return 0 end, __sub = function() return 0 end, __mul = function() return 0 end,
     __div = function() return 0 end, __mod = function() return 0 end, __pow = function() return 0 end,
     __unm = function() return 0 end, __len = function() return 0 end,
-    __lt = function() return false end, __le = function() return false end,
+    __lt = function() return false end, __le = function() return false end, __eq = eq_true,
   })
 end
 
 local function capture_load(s, chunkname)
   if type(s) ~= "string" then return nil, "bad chunk" end
+  if s:byte(1) == 27 then return nil, "binary chunks are rejected" end
   emit("capture", s)
   local f, err = real_loadstring(s, chunkname)
   if f then real_setfenv(f, env) end
@@ -134,7 +155,23 @@ for k, v in pairs(math) do wm[k] = v end
 ws.char = function(...) local r = real_str.char(...) if select("#", ...) >= 3 then note_const(r) end return r end
 ws.gsub = function(...) local r, n = real_str.gsub(...) note_const(r) return r, n end
 ws.reverse = function(x) return note_const(real_str.reverse(x)) end
-ws.format = function(...) return note_const(real_str.format(...)) end
+local function fix_format_args(fmt, ...)
+  local n, args, i = select("#", ...), {...}, 0
+  for flags, conv in real_str.gmatch(fmt, "%%([%-%+ #0%d%.]*)([%a%%])") do
+    if conv ~= "%" then
+      i = i + 1
+      if proxies[args[i]] then
+        if real_str.find("diouxXeEfgGc", conv, 1, true) then args[i] = 0 else args[i] = proxies[args[i]] end
+      end
+    end
+  end
+  return unpack(args, 1, n)
+end
+ws.format = function(fmt, ...)
+  local ok, r = real_pcall(real_str.format, fmt, ...)
+  if not ok then r = real_str.format(fmt, fix_format_args(fmt, ...)) end
+  return note_const(r)
+end
 ws.dump = function() return "" end
 ws.rep = function(x, n, ...) if type(n) == "number" and #tostring(x) * n > 1000000 then error("sandbox: string.rep too large", 0) end return real_str.rep(x, n, ...) end
 wt.maxn = function(t) local n = 0 for k in pairs(t) do if type(k) == "number" and k > n then n = k end end return n end
@@ -275,9 +312,49 @@ env.print = function(...)
   T("print(" .. table.concat(shown, ", ") .. ")")
 end
 env.warn = env.print
-env.wait = function() return 0.03, 0 end
-env.delay = function(_, f) if type(f) == "function" then real_pcall(f) end end
-env.spawn = function(f, ...) if type(f) == "function" then real_pcall(f, ...) end end
+-- cooperative scheduler: spawn/delay/defer/wait run as coroutines, the script itself is thread 1
+local managed = setmetatable({}, {__mode = "k"})
+local threads = {}
+local function newco(f)
+  local co = real_cocreate(f)
+  sethook(co, LIMIT, "", 10000)
+  return co
+end
+local function spawn_thread(f, ...)
+  local th = {co = newco(f)}
+  managed[th.co] = true
+  threads[#threads + 1] = th
+  local ok, err = coroutine.resume(th.co, ...)
+  if not ok then T("-- error in task: " .. tostring(err)) end
+  return th
+end
+env.wait = function()
+  local co = coroutine.running()
+  if co and managed[co] then coroutine.yield() end
+  return 0.03, 0
+end
+env.spawn = function(f, ...) if type(f) == "function" then return spawn_thread(f, ...) end end
+local function later(f, ...) if type(f) == "function" then return spawn_thread(function(...) coroutine.yield() return f(...) end, ...) end end
+env.delay = function(_, f, ...) return later(f, ...) end
+-- pcall that lets wait() yield through it (Lua 5.1 cannot yield across a C pcall)
+local function copcall(f, ...)
+  if type(f) ~= "function" then return false, "attempt to call a " .. type(f) .. " value" end
+  local outer = coroutine.running()
+  local co = newco(f)
+  managed[co] = outer and managed[outer] or nil
+  local res = {coroutine.resume(co, ...)}
+  while true do
+    if coroutine.status(co) == "dead" then return unpack(res) end
+    local back = {coroutine.yield(unpack(res, 2))}
+    res = {coroutine.resume(co, unpack(back))}
+  end
+end
+env.pcall = copcall
+env.xpcall = function(f, h, ...)
+  local res = {copcall(f, ...)}
+  if res[1] then return unpack(res) end
+  return false, h(res[2])
+end
 env.tick = os.clock
 env.time = os.clock
 env.elapsedTime = os.clock
@@ -307,7 +384,7 @@ env._G._G = env._G
 for _, k in ipairs({"game", "workspace", "script", "Instance", "Vector3", "Vector2", "CFrame", "Color3", "BrickColor", "UDim2", "UDim", "Enum", "Ray", "Random", "TweenInfo", "NumberSequence", "ColorSequence", "Rect", "Region3", "Drawing", "task", "Players", "RunService", "UserInputService", "HttpService", "TweenService", "Lighting", "ReplicatedStorage", "StarterGui", "CoreGui", "TeleportService", "MarketplaceService", "Stats", "Workspace"}) do
   env[k] = mk(k)
 end
-env.task = {wait = env.wait, spawn = env.spawn, delay = env.delay, defer = env.spawn}
+env.task = {wait = env.wait, spawn = env.spawn, delay = env.delay, defer = function(f, ...) return later(f, ...) end, cancel = function() end}
 
 local function mark(t, seen)
   if seen[t] then return end
@@ -327,11 +404,47 @@ LIMIT = hook
 sethook(hook, "", 10000)
 
 return function(source)
+  if source:byte(1) == 27 then emit("error", "syntax: binary chunk rejected") return end
   local f, err = real_loadstring(source, "=obf")
   if not f then emit("error", "syntax: " .. tostring(err)) return end
   real_setfenv(f, env)
-  local ok, e = real_pcall(f)
-  if not ok then emit("error", tostring(e)) end
+  local main = {co = newco(f)}
+  managed[main.co] = true
+  threads[1] = main
+  local function step(th)
+    local ok, e = coroutine.resume(th.co)
+    if not ok then
+      if th == main then emit("error", tostring(e)) else T("-- error in task: " .. tostring(e)) end
+    end
+  end
+  local function pump(ticks)
+    for _ = 1, ticks do
+      if real_clock() > DEADLINE then return end
+      local alive = false
+      for i = 1, #threads do
+        local th = threads[i]
+        if coroutine.status(th.co) == "suspended" then alive = true step(th) end
+      end
+      if not alive then return end
+    end
+  end
+  step(main)
+  pump(60)
+  local i = 1
+  while i <= #callbacks and i <= 60 and real_clock() <= DEADLINE do
+    local cb = callbacks[i]
+    i = i + 1
+    T("-- callback: " .. cb.label)
+    spawn_thread(cb.fn, mk("arg1"), mk("arg2"), mk("arg3"))
+    pump(20)
+    T("-- callback: " .. cb.label .. " [second arg false]")
+    spawn_thread(cb.fn, mk("arg1"), false, false)
+    pump(20)
+  end
+  local extra = {}
+  for text, c in pairs(tcount) do if c > 3 then extra[#extra + 1] = text .. "  -- repeated " .. c .. " times" end end
+  table.sort(extra)
+  for _, line in ipairs(extra) do emit("trace", line) end
 end, env, function(s) DEADLINE = real_clock() + s end
 '''
 

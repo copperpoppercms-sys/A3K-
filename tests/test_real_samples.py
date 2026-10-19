@@ -56,7 +56,6 @@ def test_hercules_web_v162_bug_patched_so_script_runs():
 def test_best_is_script_only_for_vm_output():
     r = deobfuscate(load("herc_web_162_congrats.lua"))
     assert r.best.splitlines()[1:] == [
-        'game:GetService("StarterGui")',
         'game:GetService("StarterGui"):SetCore("SendNotification", {Text = "congrats it worked :)!", Title = "Success", Duration = 5})',
         'print("congrats it worked :)!")',
     ]

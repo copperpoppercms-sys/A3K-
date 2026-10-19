@@ -1,7 +1,7 @@
 """Pipeline: static passes -> static loadstring unwrap -> sandboxed execution (layer capture) -> repeat."""
 from dataclasses import dataclass, field
 
-from . import decrypt, logger, passes, patches, sandbox
+from . import decrypt, logger, passes, patches, recon, sandbox
 from . import fetch as fetchmod
 
 MAX_FETCH = 8
@@ -136,7 +136,7 @@ def reconstruct(r):
     out = ["-- reconstructed observable behaviour (api calls the script made, in order)"]
     for u in r.urls:
         out.append("-- url: " + u)
-    out += r.trace
+    out += recon.tidy(r.trace)
     for i, c in enumerate(r.captures, 1):
         out.append("-- loadstring chunk %d (%d bytes)" % (i, len(c)))
     for p in r.posts:
