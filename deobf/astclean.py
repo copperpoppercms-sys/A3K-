@@ -58,6 +58,8 @@ def clean(src, verify=True, seconds=10):
         b = sandbox.run(patches.apply(out)[0], seconds)
         if a.timed_out or b.timed_out or not a.completed or not b.completed:
             return None, "verification incomplete (worker/time limit), kept original"
+        if a.unresolved_gets or b.unresolved_gets:
+            return None, "verification incomplete (remote response unavailable), kept original"
         if _norm(a) != _norm(b):
             return None, "behaviour changed by simplification, kept original"
     return out, stats

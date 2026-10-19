@@ -41,6 +41,7 @@ class Result:
     layer_history: list = field(default_factory=list)
     elapsed_seconds: float = 0
     stop_reason: str = "complete"
+    unresolved_urls: list = field(default_factory=list)
 
     @property
     def shows_recon(self):
@@ -67,6 +68,8 @@ class Result:
     def output_kind(self):
         if self.shows_recon:
             return "behavior-trace"
+        if self.unresolved_urls:
+            return "partial-source"
         if self.layers:
             return "unwrapped-source"
         return "cleaned-source" if self.changed else "unchanged-source"
@@ -112,6 +115,7 @@ def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
     http = {}
     seen = {cur}
     findings = logger.scan(cur)
+    unresolved = []
 
     def advance(inner, method):
         if len(inner) > MAX_SOURCE_BYTES:
@@ -177,6 +181,11 @@ def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
                     res.notes.append("fetch failed %s: %s" % (u, e))
             ran = sandbox.run(exec_src, seconds, http=http)
             findings.extend(logger.scan_runtime("\n".join(ran.urls + ran.posts + ran.constants)))
+        unresolved.extend(url for url in ran.unresolved_gets if url not in unresolved)
+        if ran.unresolved_gets and ran.captures and not ran.captures[-1].strip():
+            res.stop_reason = "unresolved-http"
+            res.notes.append("remote payload was not retrieved; kept the loader instead of treating an empty response as recovered source")
+            break
         if ran.captures and ran.captures[-1] != cur:
             inner = ran.captures[-1]
             if not advance(inner, "sandbox-capture"):
@@ -199,6 +208,13 @@ def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
             res.stop_reason = "time-budget" if remaining() <= 0 else "sandbox-time-limit"
         elif ran.error:
             res.stop_reason = "runtime-error"
+    res.unresolved_urls = unresolved
+    if unresolved:
+        if res.stop_reason == "complete":
+            res.stop_reason = "unresolved-http"
+        res.notes.append("%d remote URL(s) have no supplied response; analysis is partial" % len(unresolved))
+        if not fetch:
+            res.notes.append("nested downloads are disabled; use --fetch in the CLI or analyze the downloaded Lua file directly")
     if res.layers and not engine:
         # re-detect on the innermost payload only when the outer wrapper told us nothing
         e2, c2, r2, s2 = _resolve_engine(cur, None)
@@ -207,7 +223,7 @@ def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
     res.payload_engine = _resolve_engine(cur, None)[0]
     if BY_NAME.get(res.payload_engine) and BY_NAME[res.payload_engine].vm:
         res.notes.append("vm-based protector: payload never reaches loadstring, see the behaviour trace (.l)")
-    if dynamic and remaining() > 0:
+    if dynamic and remaining() > 0 and not unresolved:
         vm_engine = BY_NAME.get(res.payload_engine) and BY_NAME[res.payload_engine].vm
         if not vm_engine and len(cur) < MAX_CLEAN_BYTES:
             cleaned, info = astclean.clean(cur, seconds=seconds)
@@ -237,6 +253,8 @@ def reconstruct(r):
     out = ["-- reconstructed observable behaviour (api calls the script made, in order)"]
     for u in r.urls:
         out.append("-- url: " + u)
+    for u in r.unresolved_gets:
+        out.append("-- not retrieved (partial analysis): " + u)
     out += recon.tidy(r.trace)
     for i, c in enumerate(r.captures, 1):
         out.append("-- loadstring chunk %d (%d bytes)" % (i, len(c)))

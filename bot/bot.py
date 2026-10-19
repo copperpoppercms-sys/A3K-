@@ -156,6 +156,8 @@ def _summary(name, r):
     emb.add_field(name="layers", value=str(r.layers))
     emb.add_field(name="output", value=r.output_kind)
     emb.add_field(name="time / status", value="%.2fs / %s" % (r.elapsed_seconds, r.stop_reason))
+    if r.unresolved_urls:
+        emb.add_field(name="remote payload unavailable", value="%d URL(s) were not retrieved. This is a partial result; analyze the downloaded Lua file or enable nested fetching explicitly." % len(r.unresolved_urls), inline=False)
     emb.add_field(name="obfuscation score", value="%d/100" % r.obf_score)
     emb.add_field(name="candidates", value=top, inline=False)
     if r.notes:

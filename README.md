@@ -28,6 +28,13 @@ results with an explanation. Logger findings from outer layers are retained.
 Behavior traces retain their label and any runtime/timeout comments, including
 when the VM payload was inside another loader.
 
+When a loader requests a remote script but no response is available, the original
+loader is retained and reported as `partial-source` / `unresolved-http`. An empty
+sandbox HTTP response is never counted as recovered source. JSON reports list
+`unresolved_urls`; sandbox traces list `unresolved_gets`. Nested fetching remains
+opt-in (`--fetch` or `ALLOW_SCRIPT_FETCH=1`), and successful authorized retrieval
+does not imply a key system has been satisfied or a VM has been devirtualized.
+
 ## Source recovery for non-vm obfuscation
 
 When a script is not a vm protector, the bot parses it (`deobf/luaast.py`, a full Lua 5.1 parser with scope resolution), simplifies it (`deobf/simplify.py`) and prints readable source:

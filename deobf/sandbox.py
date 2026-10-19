@@ -24,6 +24,7 @@ class Run:
     error: str = ""
     timed_out: bool = False
     completed: bool = False
+    unresolved_gets: list = field(default_factory=list)
 
 
 def _spawn(job, timeout):
@@ -117,6 +118,7 @@ def run(source, seconds=10, queries=None, http=None):
         r.error = r.error or "sandbox: wall-clock limit"
     elif not r.completed and not r.error:
         r.error = "sandbox worker exited without a completion event"
+    r.unresolved_gets = [url for url in r.gets if not (http or {}).get(url)]
     r.constants = _clean_constants(r.constants)
     return r
 

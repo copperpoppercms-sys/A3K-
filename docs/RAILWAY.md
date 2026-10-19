@@ -40,3 +40,17 @@ Use `.report` for JSON containing source, detection candidates, layer history,
 findings, output kind, runtime errors, and stop reason. `behavior-trace` means only
 observed execution paths were reconstructed; it does not claim original VM source.
 Lua 5.1 sandbox limits still apply to Luau-only syntax and unsupported protectors.
+
+## Remote loaders and key systems
+
+`.get` retrieves the supplied URL. That URL may itself return another loader.
+With nested fetching disabled, `.report` then lists unresolved URLs instead of
+reporting the empty sandbox response as a decoded payload. Submit the public
+downloaded Lua file (or its direct URL) to analyze the next stage, or explicitly
+enable nested fetching with `ALLOW_SCRIPT_FETCH=1`. Only public-address GETs are
+supported, with the existing size and time limits.
+
+An unresolved URL alone is not evidence of a key system. A server-side key check
+may require a valid authorized session before it supplies a payload. Missing
+responses cannot validate AST cleanup. A partial sandbox result is not evidence
+of successful authentication, and the model cannot recover code that was never provided.
