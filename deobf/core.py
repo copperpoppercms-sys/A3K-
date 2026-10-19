@@ -7,8 +7,7 @@ from . import fetch as fetchmod
 MAX_FETCH = 8
 MAX_CLEAN_BYTES = 400_000
 
-# text is handled as latin-1 (one char per byte), so the utf-8 bytes of the emoji are carried as latin-1 chars
-HEADER = "-- Deobfuscated By Rift \U0001F602\U0001FAF5".encode("utf-8").decode("latin-1")
+HEADER = "-- Deobfuscated by A3K Deobfuscator"
 
 
 def with_header(text):

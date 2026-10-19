@@ -6,7 +6,7 @@ from .detect import BY_NAME
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="deobf", description="Lua/Luau deobfuscator")
+    ap = argparse.ArgumentParser(prog="deobf", description="A3K Deobfuscator — Lua/Luau script analysis and recovery")
     ap.add_argument("file", help="input script, or - for stdin")
     ap.add_argument("-e", "--engine", choices=sorted(BY_NAME), help="force an engine instead of auto-detect")
     ap.add_argument("-o", "--out", help="write result here (default stdout)")

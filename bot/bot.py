@@ -1,4 +1,4 @@
-"""Discord front-end. Prefix commands mirror the MWP DEOBF panel: .deobf .<engine> .detect .l .get .envlog .engines .help"""
+"""A3K Deobfuscator Discord front-end: .deobf .<engine> .detect .l .get .envlog .engines .help."""
 import asyncio
 import io
 import os
@@ -37,7 +37,7 @@ ENGINE_NAMES = [e.name for e in ENGINES]
 
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
+bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None, description="A3K Deobfuscator")
 
 
 def _b(text):
@@ -91,7 +91,8 @@ async def _job(fn, *a, **kw):
 
 
 def _summary(name, r):
-    emb = discord.Embed(title="deobfuscated: %s" % name, colour=0x57F287 if r.changed else 0x99AAB5)
+    emb = discord.Embed(title="A3K Deobfuscator: %s" % name, colour=0x57F287 if r.changed else 0x99AAB5)
+    emb.set_footer(text="Signature scores are heuristic. Recovery is best effort; VM output may be a behavior trace.")
     top = ", ".join("%s %d%%" % c for c in r.candidates[:3]) or "no signature match"
     emb.add_field(name="engine", value="%s (%d%%)" % (r.engine, r.confidence))
     emb.add_field(name="layers", value=str(r.layers))
@@ -126,8 +127,8 @@ class RemoveLogger(discord.ui.Button):
 
 
 class EnginePicker(discord.ui.Select):
-    def __init__(self, name, raw):
-        super().__init__(placeholder="re-run as another engine", options=[discord.SelectOption(label=e.label, value=e.name) for e in ENGINES])
+    def __init__(self, name, raw, engines, group=1):
+        super().__init__(placeholder="re-run as another engine (group %d)" % group, options=[discord.SelectOption(label=e.label, value=e.name) for e in engines])
         self.name, self.raw = name, raw
 
     async def callback(self, inter):
@@ -141,7 +142,9 @@ class ResultView(discord.ui.View):
         super().__init__(timeout=900)
         if r.is_logger:
             self.add_item(RemoveLogger(name, r.body, r.shows_recon))
-        self.add_item(EnginePicker(name, raw))
+        # Discord allows 25 options per select and five rows per view.
+        for start in range(0, len(ENGINES), 25):
+            self.add_item(EnginePicker(name, raw, ENGINES[start:start + 25], start // 25 + 1))
 
 
 async def run_deobf(ctx, arg, engine=None):
@@ -243,10 +246,12 @@ async def envlog_cmd(ctx, *, arg=""):
 async def engines_cmd(ctx):
     lines = ["`.%s` - %s%s" % (e.name, e.label, " (vm)" if e.vm else "") for e in ENGINES]
     active = int(os.environ.get("MAX_JOBS", "4")) - JOBS._value
-    await ctx.reply("\n".join(lines) + "\n\nqueue: %d running, limit %s" % (active, os.environ.get("MAX_JOBS", "4")), mention_author=False)
+    text = "A3K Deobfuscator — %d detector profiles\n" % len(ENGINES)
+    text += "\n".join(lines) + "\n\nqueue: %d running, limit %s" % (active, os.environ.get("MAX_JOBS", "4"))
+    await _reply_chunks(ctx, text)
 
 
-HELP = """**MWP DEOBF**
+HELP = """**A3K Deobfuscator**
 **Deobfuscation**
 `.deobf` - detect + pick engine (unified panel)
 {engines}
@@ -255,16 +260,32 @@ HELP = """**MWP DEOBF**
 **Tools**
 `.get <url>` - fetch a script, then Deobfuscate or Env Log it
 `.envlog` - executor-side capture loader (or analyse uploaded `loadstring*.txt`)
-`.engines` - supported obfuscators + queue status
+`.engines` - detector profiles + queue status
 `.help` - this message
 **Safety**
 every result is scanned for item-stealer / data-exfil chunks; if found you get a Remove logger button.
-attach up to 10 .lua/.luau/.txt files, paste code, give a url, or reply to a sample. files run in parallel."""
+attach up to 10 .lua/.luau/.txt files, paste code, give a url, or reply to a sample. files run in parallel.
+Detection uses heuristic signatures; recovery is best effort. VM output may be a behavior trace."""
+
+
+async def _reply_chunks(ctx, text):
+    """Keep help/catalog replies below Discord's 2,000-character limit."""
+    chunk = ""
+    for line in text.splitlines(keepends=True):
+        if chunk and len(chunk) + len(line) > 1900:
+            await ctx.reply(chunk, mention_author=False)
+            chunk = ""
+        while len(line) > 1900:
+            await ctx.reply(line[:1900], mention_author=False)
+            line = line[1900:]
+        chunk += line
+    if chunk:
+        await ctx.reply(chunk, mention_author=False)
 
 
 @bot.command(name="help")
 async def help_cmd(ctx):
-    await ctx.reply(HELP.format(engines=" · ".join("`.%s`" % n for n in ENGINE_NAMES)), mention_author=False)
+    await _reply_chunks(ctx, HELP.format(engines=" · ".join("`.%s`" % n for n in ENGINE_NAMES)))
 
 
 @bot.event

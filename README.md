@@ -1,6 +1,12 @@
-# deobfuscator-
+# A3K Deobfuscator
 
 Lua / Luau deobfuscator with a Discord bot front-end (`.deobf`, `.luraph`, `.wearedevs`, `.l`, `.get`, ...).
+
+**39 detector profiles**, including 25 additional Lua/Luau community protectors and services.
+See [detection coverage](docs/DETECTION.md) for the full list, signature evidence, and limits.
+All profiles use the existing recovery pipeline on a best-effort basis; a detector entry does
+not mean a dedicated devirtualizer. Detection cannot be guaranteed for every release or a
+script whose identifying markers have been removed. Match scores are heuristic, not probabilities.
 
 ## How it works
 

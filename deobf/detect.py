@@ -2,6 +2,8 @@
 import re
 from dataclasses import dataclass, field
 
+from .catalog import EXTRA_ENGINES
+
 
 @dataclass
 class Engine:
@@ -32,6 +34,7 @@ ENGINES = [
     _e("rerubi", "Rerubi VM loader", True, (r"OpArgR", 60, "OpArgR opcode table"), (r"OpArgK.{0,80}OpArgN", 30)),
     _e("luast", "Luast", True, (r"\bluast\b", 85)),
 ]
+ENGINES.extend(_e(name, label, vm, *sigs) for name, label, vm, sigs in EXTRA_ENGINES)
 BY_NAME = {e.name: e for e in ENGINES}
 MIN_REPORT = 30
 
