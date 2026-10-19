@@ -4,6 +4,7 @@ needs: git clone https://github.com/zeusssz/hercules-obfuscator (set HERCULES_RO
 import os, sys, shutil
 from lupa.lua54 import LuaRuntime
 preset, inp, out = sys.argv[1:4]
+inp, out = os.path.abspath(inp), os.path.abspath(out)
 root = os.environ.get("HERCULES_ROOT", "/home/user/zeusssz/hercules-obfuscator") + "/src"
 os.chdir(root)
 work = "/tmp/herc_work_%s.lua" % preset
