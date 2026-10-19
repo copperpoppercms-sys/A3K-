@@ -7,7 +7,7 @@ import re
 import discord
 from discord.ext import commands
 
-from deobf import ENGINES, deobfuscate, detect, logger, trace_behavior
+from deobf import ENGINES, deobfuscate, detect, logger, trace_behavior, with_header
 from deobf.envlog import LOADER, pick_final
 from deobf.fetch import FetchError, extract_loader_url, fetch
 
@@ -119,7 +119,7 @@ class RemoveLogger(discord.ui.Button):
     async def callback(self, inter):
         await inter.response.defer(thinking=True)
         clean, notes = await _job(logger.remove, self.source)
-        await inter.followup.send("; ".join(notes) or "nothing to strip", file=_file(clean, "clean_" + self.name))
+        await inter.followup.send("; ".join(notes) or "nothing to strip", file=_file(with_header(clean), "clean_" + self.name))
 
 
 class EnginePicker(discord.ui.Select):

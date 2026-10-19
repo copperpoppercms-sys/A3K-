@@ -5,6 +5,13 @@ from . import decrypt, logger, passes, patches, sandbox
 from . import fetch as fetchmod
 
 MAX_FETCH = 8
+
+# text is handled as latin-1 (one char per byte), so the utf-8 bytes of the emoji are carried as latin-1 chars
+HEADER = "-- Deobfused By Rift \U0001F595 (Get better \U0001F62D\U0001FAF5)".encode("utf-8").decode("latin-1")
+
+
+def with_header(text):
+    return HEADER + "\n" + text
 from .detect import BY_NAME, detect, obfuscation_score
 
 
@@ -34,8 +41,8 @@ class Result:
         vm = BY_NAME.get(self.engine) and BY_NAME[self.engine].vm
         if self.recon and (not self.changed or (not self.layers and (vm or self.obf_after >= 25))):
             code = [ln for ln in self.recon.splitlines() if not ln.startswith("--")]
-            return "\n".join(code) if code else self.recon
-        return self.source
+            return with_header("\n".join(code) if code else self.recon)
+        return with_header(self.source)
 
     @property
     def is_logger(self):
