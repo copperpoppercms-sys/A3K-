@@ -1,7 +1,7 @@
 import argparse
 import sys
 
-from . import deobfuscate, detect, trace_behavior
+from . import analyze, deobfuscate, trace_behavior
 from .detect import BY_NAME
 
 
@@ -18,10 +18,11 @@ def main(argv=None):
     raw = sys.stdin.buffer.read() if a.file == "-" else open(a.file, "rb").read()
     src = raw.decode("latin-1")
     if a.detect:
-        ranked, score = detect(src)
-        print("obfuscation score: %d/100" % score)
-        for n, c in ranked or [("unknown", 0)]:
-            print("%-14s %d%%" % (n, c))
+        rep = analyze(src)
+        print("obfuscation score: %d/100" % rep["score"])
+        for n, c, why in rep["engines"] or [("unknown", 0, [])]:
+            print("%-14s %d%%  %s" % (n, c, "; ".join(why)))
+        print("techniques: " + (", ".join("%s (%s)" % t for t in rep["techniques"]) or "none seen"))
         return
     if a.trace:
         text = trace_behavior(src)[0]

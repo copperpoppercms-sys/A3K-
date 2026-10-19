@@ -1,10 +1,11 @@
 """Pipeline: static passes -> static loadstring unwrap -> sandboxed execution (layer capture) -> repeat."""
 from dataclasses import dataclass, field
 
-from . import decrypt, logger, passes, patches, recon, sandbox
+from . import astclean, decrypt, logger, passes, patches, recon, sandbox
 from . import fetch as fetchmod
 
 MAX_FETCH = 8
+MAX_CLEAN_BYTES = 400_000
 
 # text is handled as latin-1 (one char per byte), so the utf-8 bytes of the emoji are carried as latin-1 chars
 HEADER = "-- Deobfuscated By Rift \U0001F602\U0001FAF5".encode("utf-8").decode("latin-1")
@@ -38,7 +39,7 @@ class Result:
     @property
     def shows_recon(self):
         vm = BY_NAME.get(self.engine) and BY_NAME[self.engine].vm
-        return bool(self.recon and (not self.changed or (not self.layers and (vm or self.obf_after >= 25))))
+        return bool(self.recon and not self.layers and (vm or self.obf_after >= 25))
 
     @property
     def body(self):
@@ -131,6 +132,17 @@ def deobfuscate(src, engine=None, dynamic=True, max_layers=8, seconds=10, fetch=
             res.engine, res.confidence, res.candidates = e2, c2, r2
     if BY_NAME.get(res.engine) and BY_NAME[res.engine].vm and not res.layers:
         res.notes.append("vm-based protector: payload never reaches loadstring, see the behaviour trace (.l)")
+    if dynamic:
+        vm_engine = BY_NAME.get(res.engine) and BY_NAME[res.engine].vm
+        if not vm_engine and len(cur) < MAX_CLEAN_BYTES:
+            cleaned, info = astclean.clean(cur, seconds=seconds)
+            if cleaned is None:
+                res.notes.append("ast cleanup skipped: " + info)
+            elif info["nodes_after"] <= 0.85 * info["nodes_before"] or info["renamed"] >= 3 or info["evaluated"]:
+                cur = cleaned
+                res.notes.append(
+                    "ast cleanup (verified by re-running): removed %d, evaluated %d, renamed %d" % (info["removed"], info["evaluated"], info["renamed"])
+                )
     res.source = cur
     res.changed = cur != original
     res.obf_after = obfuscation_score(cur)

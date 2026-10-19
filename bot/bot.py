@@ -7,7 +7,7 @@ import re
 import discord
 from discord.ext import commands
 
-from deobf import ENGINES, deobfuscate, detect, logger, trace_behavior, with_header
+from deobf import ENGINES, analyze, deobfuscate, logger, trace_behavior, with_header
 from deobf.envlog import LOADER, pick_final
 from deobf.fetch import FetchError, extract_loader_url, fetch
 
@@ -172,12 +172,21 @@ for _n in ENGINE_NAMES:
 @bot.command(name="detect")
 async def detect_cmd(ctx, *, arg=""):
     items = await gather_inputs(ctx, arg)
-    lines = []
+    blocks = []
     for name, text in items:
-        ranked, score = detect(text)
-        body = ", ".join("%s %d%%" % c for c in ranked) or "no known signature"
-        lines.append("**%s** - %s | obfuscation score %d/100" % (name, body, score))
-    await ctx.reply("\n".join(lines)[:1900], mention_author=False)
+        rep = analyze(text)
+        if rep["engines"]:
+            top = rep["engines"][0]
+            head = "**%s** - %s %d%%" % (name, top[0], top[1])
+            if len(rep["engines"]) > 1:
+                head += " (also: %s)" % ", ".join("%s %d%%" % (e[0], e[1]) for e in rep["engines"][1:3])
+            why = "because: " + ", ".join(top[2][:3])
+            hint = "try `.%s` or `.deobf`" % top[0]
+        else:
+            head, why, hint = "**%s** - no known signature" % name, "", "try `.deobf`, it still runs and records the script"
+        tags = ", ".join(t[0] for t in rep["techniques"]) or "none seen"
+        blocks.append("\n".join(x for x in (head, "obfuscation score %d/100 | techniques: %s" % (rep["score"], tags), why, hint) if x))
+    await ctx.reply("\n\n".join(blocks)[:1900], mention_author=False)
 
 
 @bot.command(name="l")

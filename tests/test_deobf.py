@@ -80,14 +80,14 @@ def test_xor_decoder_inlined():
     )
     src = "--[[ v1.0.0 https://wearedevs.net/obfuscator ]] return(function(...)" + DECODER + body + " end)(...)"
     r = deobfuscate(src)
-    assert 'game:GetService("Players")' in r.source and 'print("hello","world")' in r.source
+    assert 'game:GetService("Players")' in r.source and 'print("hello", "world")' in r.source
     assert any(n.startswith("decoder:") for n in r.notes)
 
 
 def test_numeric_getter_with_rotation_table():
     src = 'local T={"\\x61","\\x62","\\x63"} local function g(i) return T[i] end print(g(1),g(2),g(3))'
     r = deobfuscate(src)
-    assert 'print("a","b","c")' in r.source
+    assert 'print("a", "b", "c")' in r.source
 
 
 def test_bit32_is_real():

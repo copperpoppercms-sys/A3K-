@@ -7,8 +7,8 @@ import re
 
 from . import passes
 
-_HERCULES_STORE = re.compile(r"(\b\w+)\.s then \1\.A=(\w+)\.D\[")
-_HERCULES_LOAD = re.compile(r"(\b\w+)\.s then (\w+)=(\w+)\.A else")
+_HERCULES_STORE = re.compile(r"(\b\w+)\.s then \1\.A\s*=\s*(\w+)\.D\[")
+_HERCULES_LOAD = re.compile(r"(\b\w+)\.s then (\w+)\s*=\s*(\w+)\.A else")
 
 
 def _hercules_vm_clobber(src):

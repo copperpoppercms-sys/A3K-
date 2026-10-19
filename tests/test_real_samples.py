@@ -76,3 +76,41 @@ def test_hard_gui_script_fully_recovered(name):
     text = r.recon
     assert r.error == ""
     assert [m for m in HARD_MARKERS if m not in text] == []
+
+
+def test_hercules_heavy_comes_back_as_clean_source():
+    r = deobfuscate(load("herc_heavy.lua"))
+    assert any("ast cleanup" in n for n in r.notes)
+    assert "Tamper" not in r.source and "BFR" not in r.source
+    assert 'local Players = game:GetService("Players")' in r.source
+    assert 'game:GetService("StarterGui"):SetCore("SendNotification", {Title = "Test", Text = "ok"})' in r.source
+    assert len(r.source) < 1500
+
+
+def test_hercules_heavy_gui_script_becomes_readable_source():
+    r = deobfuscate(load("hard_herc_heavy.lua"))
+    for m in ('Instance.new("ScreenGui")', "MouseButton1Click:Connect(function", "task.spawn(function", 'Duration = 3'):
+        assert m in r.source, m
+    assert len(r.source) < 3000
+
+
+def test_analyze_reports_reasons_and_techniques():
+    from deobf import analyze
+
+    rep = analyze(load("herc_heavy.lua"))
+    assert rep["engines"][0][0] == "hercules" and rep["engines"][0][2]
+    tags = {t[0] for t in rep["techniques"]}
+    assert {"anti-tamper", "control-flow-flattening", "junk-code"} <= tags
+    assert analyze(load("src1.lua"))["engines"] == [] and analyze(load("src1.lua"))["score"] < 10
+
+
+def test_layered_obfuscation_reports_both_layers():
+    from deobf import detect
+
+    names = [n for n, _ in detect(load("hard_nested_ib2_over_prom.lua"))[0]]
+    assert "ironbrew" in names
+
+
+def test_plain_script_comes_back_as_its_source():
+    r = deobfuscate(load("src1.lua"))
+    assert "local Players = game:GetService(\"Players\")" in r.best and not r.shows_recon
