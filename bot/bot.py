@@ -11,7 +11,7 @@ from deobf import ENGINES, deobfuscate, detect, logger, trace_behavior
 from deobf.envlog import LOADER, pick_final
 from deobf.fetch import FetchError, fetch
 
-PREFIX = os.environ.get("BOT_PREFIX", ".")
+PREFIX = os.environ.get("BOT_PREFIX", ".")  # read at import; set BOT_PREFIX in the real environment, not .env
 MAX_FILES = 10
 MAX_BYTES = 2 * 1024 * 1024
 FETCH = os.environ.get("ALLOW_SCRIPT_FETCH") == "1"  # let scripts pull their next stage via HttpGet (public urls only)
@@ -253,7 +253,21 @@ async def on_command_error(ctx, err):
     raise err
 
 
+def load_env(path=".env"):
+    """KEY=VALUE lines from .env (does not override variables already set)."""
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ.setdefault(k.strip(), v.split(" #")[0].strip().strip("\"'"))
+    except OSError:
+        pass
+
+
 def main():
+    load_env()
     token = os.environ.get("DISCORD_TOKEN")
     if not token:
         raise SystemExit("set DISCORD_TOKEN (bot token from the discord developer portal)")
