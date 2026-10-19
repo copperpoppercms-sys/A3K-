@@ -43,3 +43,11 @@ def test_hercules_web_v162_constants_and_anti_tamper():
     for c in ("SetCore", "SendNotification", "congrats it worked :)!"):
         assert c in r.constants
     assert "Tamper" not in r.recon
+
+
+def test_hercules_web_v162_bug_patched_so_script_runs():
+    r = deobfuscate(load("herc_web_162_congrats.lua"))
+    assert r.error == ""
+    assert 'game:GetService("StarterGui"):SetCore("SendNotification", {' in r.recon
+    assert 'print("congrats it worked :)!")' in r.recon
+    assert any("hercules vm operand clobber" in n for n in r.notes)

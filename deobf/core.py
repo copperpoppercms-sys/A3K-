@@ -1,7 +1,7 @@
 """Pipeline: static passes -> static loadstring unwrap -> sandboxed execution (layer capture) -> repeat."""
 from dataclasses import dataclass, field
 
-from . import decrypt, logger, passes, sandbox
+from . import decrypt, logger, passes, patches, sandbox
 from . import fetch as fetchmod
 
 MAX_FETCH = 8
@@ -78,7 +78,12 @@ def deobfuscate(src, engine=None, dynamic=True, max_layers=8, seconds=10, fetch=
             continue
         if not dynamic:
             break
-        ran = sandbox.run(cur, seconds, http=http)
+        exec_src, fixed = patches.apply(cur)
+        for name in fixed:
+            note = "patched obfuscator bug: " + name
+            if note not in res.notes:
+                res.notes.append(note)
+        ran = sandbox.run(exec_src, seconds, http=http)
         while fetch and len(http) < MAX_FETCH:
             new = [u for u in ran.gets if u not in http][: MAX_FETCH - len(http)]
             if not new:
@@ -90,7 +95,7 @@ def deobfuscate(src, engine=None, dynamic=True, max_layers=8, seconds=10, fetch=
                 except fetchmod.FetchError as e:
                     http[u] = ""
                     res.notes.append("fetch failed %s: %s" % (u, e))
-            ran = sandbox.run(cur, seconds, http=http)
+            ran = sandbox.run(exec_src, seconds, http=http)
         if ran.captures and ran.captures[-1] != cur:
             cur, res.layers = ran.captures[-1], res.layers + 1
             res.notes.append("captured loadstring layer %d" % res.layers)
