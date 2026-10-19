@@ -70,6 +70,15 @@ def run(source, seconds=10):
     return r
 
 
+def decrypt(prefix, name, calls, seconds=15):
+    """Evaluate decoder `name` (defined by `prefix`) for each argument tuple; None per failed call."""
+    out, _ = _spawn({"mode": "decrypt", "source": prefix, "name": name, "calls": calls, "seconds": seconds}, seconds + 8)
+    for ev in _lines(out):
+        if ev.get("k") == "decrypt":
+            return json.loads(ev["v"])
+    return None
+
+
 def syntax_ok(source):
     """True when Lua 5.1 accepts the chunk (Luau-only syntax reports False)."""
     out, _ = _spawn({"source": source, "mode": "check"}, 10)

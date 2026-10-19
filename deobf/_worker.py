@@ -93,8 +93,39 @@ env.coroutine = {
   resume = coroutine.resume, yield = coroutine.yield, status = coroutine.status, running = coroutine.running, isyieldable = function() return false end,
 }
 env.os = {time = os.time, clock = os.clock, date = os.date, difftime = os.difftime}
-env.bit32 = bit or {band = function(a, b) return 0 end, bor = function(a, b) return 0 end, bxor = function(a, b) return 0 end}
-env.bit = env.bit32
+local M32 = 4294967296
+local function n32(x) return x % M32 end
+local function bitop(a, b, f)
+  a, b = n32(a), n32(b)
+  local r, p = 0, 1
+  while a > 0 or b > 0 do
+    local x, y = a % 2, b % 2
+    if f(x, y) then r = r + p end
+    a, b, p = (a - x) / 2, (b - y) / 2, p * 2
+  end
+  return r
+end
+local function fold(start, f)
+  return function(...)
+    local r = start
+    for i = 1, select("#", ...) do r = bitop(r, (select(i, ...)), f) end
+    return r
+  end
+end
+local b32 = {
+  band = fold(M32 - 1, function(x, y) return x == 1 and y == 1 end),
+  bor = fold(0, function(x, y) return x == 1 or y == 1 end),
+  bxor = fold(0, function(x, y) return x ~= y end),
+  bnot = function(a) return M32 - 1 - n32(a) end,
+  lshift = function(a, n) if n >= 32 then return 0 end if n < 0 then return math.floor(n32(a) / 2 ^ -n) end return (n32(a) % 2 ^ (32 - n)) * 2 ^ n end,
+  rshift = function(a, n) if n >= 32 then return 0 end if n < 0 then return (n32(a) % 2 ^ (32 + n)) * 2 ^ -n end return math.floor(n32(a) / 2 ^ n) end,
+}
+b32.btest = function(...) return b32.band(...) ~= 0 end
+b32.arshift = function(a, n) a = n32(a) local r = b32.rshift(a, n) if a >= 2147483648 and n > 0 then r = r + (M32 - 2 ^ (32 - math.min(n, 32))) end return n32(r) end
+b32.lrotate = function(a, n) n = n % 32 return b32.bor(b32.lshift(a, n), b32.rshift(a, 32 - n)) end
+b32.rrotate = function(a, n) return b32.lrotate(a, -n) end
+b32.extract = function(a, f, w) return b32.band(b32.rshift(a, f), 2 ^ (w or 1) - 1) end
+env.bit32, env.bit = b32, b32
 env.debug = {traceback = function() return "" end, getinfo = function() return {short_src = "=?", source = "=?", currentline = 0, what = "Lua"} end, sethook = function() end, gethook = function() end, getlocal = function() end, getupvalue = function() end, getmetatable = getmetatable}
 env.loadstring = capture_load
 env.load = function(x, name)
@@ -155,7 +186,7 @@ return function(source)
   real_setfenv(f, env)
   local ok, e = real_pcall(f)
   if not ok then emit("error", tostring(e)) end
-end
+end, env
 '''
 
 
@@ -181,10 +212,22 @@ def main():
     clock = lua.eval("os.clock")
     deadline = clock() + job.get("seconds", 10)
     loader = lua.eval("function(code, ...) return assert(loadstring(code))(...) end")
-    runner = loader(
+    runner, env = loader(
         BOOT.encode(), emit, g.loadstring, g.pcall, g.setfenv, clock, g.debug.sethook,
         g.coroutine.create, g.coroutine.wrap, None, deadline,
     )
+    if job.get("mode") == "decrypt":
+        # prefix defines the decoder; evaluate it for every literal argument tuple
+        runner(src + b"\n__DECODER__ = " + job["name"].encode() + b"\n")
+        fn = env[b"__DECODER__"]
+        call = lua.eval("function(f, ...) local ok, r = pcall(f, ...) if ok and type(r) == 'string' then return r end return nil end")
+        out = []
+        for args in job["calls"]:
+            largs = [a[1].encode("latin-1") if a[0] == "s" else a[1] for a in args]
+            r = call(fn, *largs) if fn is not None else None
+            out.append(r.decode("latin-1") if r is not None else None)
+        emit("decrypt", json.dumps(out))
+        return
     runner(src)
     emit("done", "")
 

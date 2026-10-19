@@ -1,7 +1,7 @@
 """Pipeline: static passes -> static loadstring unwrap -> sandboxed execution (layer capture) -> repeat."""
 from dataclasses import dataclass, field
 
-from . import logger, passes, sandbox
+from . import decrypt, logger, passes, sandbox
 from .detect import BY_NAME, detect
 
 
@@ -47,6 +47,13 @@ def deobfuscate(src, engine=None, dynamic=True, max_layers=8, seconds=10):
     for layer in range(max_layers):
         cur, notes = passes.run_static(cur)
         res.notes += ["static:" + n for n in notes]
+        if dynamic:
+            for _ in range(3):
+                folded, n = decrypt.fold(cur)
+                if not n:
+                    break
+                cur, notes = passes.run_static(folded)
+                res.notes.append("decoder: inlined %d call(s)" % n)
         inner = passes.unwrap_static(cur)
         if inner is not None:
             cur, res.layers = inner, res.layers + 1
