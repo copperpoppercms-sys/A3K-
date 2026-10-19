@@ -47,8 +47,8 @@ def test_sandbox_time_limit_keeps_captures():
 
 
 def test_sandbox_blocks_host_access():
-    r = sandbox.run('print(io, os.execute, debug.sethook ~= nil, getfenv()==_G)')
-    assert r.prints == ["nil\tnil\ttrue\tfalse"]
+    r = sandbox.run('print(io.open("/etc/passwd")) print(os.execute("echo pwned") == nil, getfenv()==_G, debug.sethook ~= nil)')
+    assert r.prints == ["nil\tdenied", "true\tfalse\ttrue"]
 
 
 def test_trace():

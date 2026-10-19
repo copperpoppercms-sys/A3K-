@@ -34,3 +34,12 @@ def test_hercules_balanced_decoder_fully_inlined():
 def test_hercules_runtime_error_reported_faithfully():
     r = deobfuscate(load("herc_heavy.lua"))
     assert "attempt to perform arithmetic on global 'i'" in r.error
+
+
+def test_hercules_web_v162_constants_and_anti_tamper():
+    r = deobfuscate(load("herc_web_162_congrats.lua"))
+    assert r.engine == "hercules"
+    assert 'game:GetService("StarterGui")' in r.recon
+    for c in ("SetCore", "SendNotification", "congrats it worked :)!"):
+        assert c in r.constants
+    assert "Tamper" not in r.recon

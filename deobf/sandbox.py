@@ -114,6 +114,20 @@ _ERR_RE = re.compile(r"^(?:obf|\[string)[^\n]{0,40}?:\d+:")
 _RANDOM_NAME_RE = re.compile(r"^(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{6,20}$")
 
 
+_STD_NAMES = frozenset("""
+assert collectgarbage dofile error getfenv getmetatable ipairs load loadfile loadstring next pairs pcall print rawequal rawget rawset
+select setfenv setmetatable tonumber tostring type unpack xpcall coroutine create resume yield status wrap running isyieldable
+math abs acos asin atan atan2 ceil cos cosh deg exp floor fmod frexp huge ldexp log log10 max min modf pi pow rad random randomseed sin sinh sqrt tan tanh
+os clock date difftime execute exit getenv remove rename setlocale time tmpname
+string byte char dump find format gmatch gsub len lower match rep reverse sub upper
+table concat insert maxn remove sort unpack pack
+debug getinfo getlocal getupvalue setupvalue sethook gethook traceback getregistry info
+package loaded preload path cpath io _G _ENV what source short_src currentline linedefined lastlinedefined nups
+__index __newindex __call __metatable __gc __len __mode __tostring __concat __eq __lt __le __unm __add __sub __mul __div __mod __pow
+""".split())
+_TAMPER_RE = re.compile(r"tamper|suspicious|modified|replaced or wrapped|debug library", re.I)
+
+
 def _clean_constants(items):
     """Drop fragments of longer strings and short random-looking junk produced while a vm assembles its string pool."""
     uniq = list(dict.fromkeys(items))
@@ -124,6 +138,8 @@ def _clean_constants(items):
             continue  # substring of another captured string
         if len(c) <= 8 and any(ch.isdigit() for ch in c) and any(ch.isalpha() for ch in c) and not c.isidentifier():
             continue
+        if c in _STD_NAMES or _TAMPER_RE.search(c):
+            continue  # the protector's own integrity checks, not the script's data
         if _ERR_RE.match(c) or _RANDOM_NAME_RE.match(c):
             continue  # sandbox error text / a protector's generated identifiers
         keep.append(c)

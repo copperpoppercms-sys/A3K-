@@ -135,7 +135,9 @@ ws.char = function(...) local r = real_str.char(...) if select("#", ...) >= 3 th
 ws.gsub = function(...) local r, n = real_str.gsub(...) note_const(r) return r, n end
 ws.reverse = function(x) return note_const(real_str.reverse(x)) end
 ws.format = function(...) return note_const(real_str.format(...)) end
+ws.dump = function() return "" end
 ws.rep = function(x, n, ...) if type(n) == "number" and #tostring(x) * n > 1000000 then error("sandbox: string.rep too large", 0) end return real_str.rep(x, n, ...) end
+wt.maxn = function(t) local n = 0 for k in pairs(t) do if type(k) == "number" and k > n then n = k end end return n end
 local real_concat = table.concat
 wt.concat = function(...) return note_const(real_concat(...)) end
 wt.unpack, wt.pack = unpack, function(...) return {n = select("#", ...), ...} end
@@ -160,7 +162,18 @@ env.coroutine = {
   wrap = function(f) local co = real_cocreate(f); sethook(co, LIMIT, "", 10000); return function(...) local r = {coroutine.resume(co, ...)}; if not r[1] then error(r[2], 0) end; return unpack(r, 2) end end,
   resume = coroutine.resume, yield = coroutine.yield, status = coroutine.status, running = coroutine.running, isyieldable = function() return false end,
 }
-env.os = {time = os.time, clock = os.clock, date = os.date, difftime = os.difftime}
+env.os = {time = os.time, clock = os.clock, date = os.date, difftime = os.difftime,
+  getenv = function() return nil end, tmpname = function() return "" end, setlocale = function() return "C" end,
+  exit = function() T("os.exit()") error("sandbox: os.exit", 0) end,
+  execute = function(c) T("os.execute(" .. q(c) .. ")") return nil end,
+  remove = function(f) T("os.remove(" .. q(f) .. ")") return nil, "denied" end,
+  rename = function(a, b) T("os.rename(" .. q(a) .. ", " .. q(b) .. ")") return nil, "denied" end}
+env.io = {write = function() end, read = function() end, open = function(f) T("io.open(" .. q(f) .. ")") return nil, "denied" end,
+  lines = function() return function() end end, close = function() end, stdout = {write = function() end}, stderr = {write = function() end}}
+env.package = {loaded = {}, preload = {}, path = "", cpath = "", loaders = {}, searchers = {}}
+env.loadfile = function() return nil, "denied" end
+env.dofile = function() error("denied", 0) end
+env.module = function() end
 local M32 = 4294967296
 local function n32(x) return x % M32 end
 local function bitop(a, b, f)
@@ -194,7 +207,25 @@ b32.lrotate = function(a, n) n = n % 32 return b32.bor(b32.lshift(a, n), b32.rsh
 b32.rrotate = function(a, n) return b32.lrotate(a, -n) end
 b32.extract = function(a, f, w) return b32.band(b32.rshift(a, f), 2 ^ (w or 1) - 1) end
 env.bit32, env.bit = b32, b32
-env.debug = {info = function() return "" end, traceback = function() return "" end, getinfo = function() return {short_src = "=?", source = "=?", currentline = 0, what = "Lua"} end, sethook = function() end, gethook = function() end, getlocal = function() end, getupvalue = function() end, getmetatable = getmetatable}
+local real_debug = debug
+local native = setmetatable({}, {__mode = "k"})
+local function stub_info(f, what)
+  if type(f) == "function" then
+    if native[f] then
+      return {what = "C", short_src = "[C]", source = "=[C]", currentline = -1, linedefined = -1, lastlinedefined = -1, nups = 0, namewhat = "", func = f}
+    end
+    return real_debug.getinfo(f, what)
+  end
+  return {what = "Lua", short_src = "obf", source = "=obf", currentline = 1, linedefined = 1, lastlinedefined = 1, nups = 0, namewhat = "", name = "?"}
+end
+env.debug = {
+  info = function(f, w) local i = stub_info(f, "S") if w and w:find("s") then return i.short_src end return "" end,
+  getinfo = stub_info, traceback = function(m) return tostring(m or "") end,
+  sethook = function() end, gethook = function() end,
+  getlocal = function() end, setlocal = function() end, getupvalue = function() end, setupvalue = function() end,
+  upvalueid = function() end, upvaluejoin = function() end, getregistry = function() return {} end,
+  getmetatable = getmetatable, setmetatable = setmetatable, getfenv = function() return env end, setfenv = function(f) return f end,
+}
 env.loadstring = capture_load
 env.load = function(x, name)
   if type(x) == "function" then
@@ -277,6 +308,17 @@ for _, k in ipairs({"game", "workspace", "script", "Instance", "Vector3", "Vecto
   env[k] = mk(k)
 end
 env.task = {wait = env.wait, spawn = env.spawn, delay = env.delay, defer = env.spawn}
+
+local function mark(t, seen)
+  if seen[t] then return end
+  seen[t] = true
+  for _, v in pairs(t) do
+    if type(v) == "function" then native[v] = true elseif type(v) == "table" and not proxies[v] then mark(v, seen) end
+  end
+end
+mark(env, {})
+for _, k in ipairs({"string", "table", "math", "os", "io", "debug", "coroutine", "bit32", "package"}) do env.package.loaded[k] = env[k] end
+env.package.loaded._G = env
 
 local hook = function()
   if real_clock() > DEADLINE then error("sandbox: time limit", 0) end
