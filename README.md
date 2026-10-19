@@ -35,6 +35,18 @@ sandbox HTTP response is never counted as recovered source. JSON reports list
 opt-in (`--fetch` or `ALLOW_SCRIPT_FETCH=1`), and successful authorized retrieval
 does not imply a key system has been satisfied or a VM has been devirtualized.
 
+The sandbox supports Lua 5.3-style floor division (`//`) through a syntax-aware
+compatibility pass on the execution copy. It preserves precedence, evaluates each
+operand once, and captures the standard floor operation before the input can
+shadow it. Compatibility notes are included in JSON reports. The original
+deliverable is not rewritten just to make it execute. This uses Lua 5.1 double
+precision, rejects zero divisors, and is not a full Lua 5.3/5.4 or Luau runtime.
+Very large integer arithmetic and protected `__idiv` metatables are not emulated.
+At most 256 floor-division operators are translated in one chunk.
+
+Unresolved syntax errors now produce `syntax-error` / `unexecuted-source`, rather
+than presenting minor static edits as successful payload analysis.
+
 ## Source recovery for non-vm obfuscation
 
 When a script is not a vm protector, the bot parses it (`deobf/luaast.py`, a full Lua 5.1 parser with scope resolution), simplifies it (`deobf/simplify.py`) and prints readable source:

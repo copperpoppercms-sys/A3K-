@@ -7,6 +7,7 @@ import sys
 from dataclasses import dataclass, field
 
 from .budget import remaining
+from .compat import prepare
 
 _WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_worker.py")
 
@@ -25,6 +26,7 @@ class Run:
     timed_out: bool = False
     completed: bool = False
     unresolved_gets: list = field(default_factory=list)
+    compatibility: list = field(default_factory=list)
 
 
 def _spawn(job, timeout):
@@ -78,6 +80,7 @@ def run(source, seconds=10, queries=None, http=None):
     seconds = remaining(seconds)
     if seconds <= 0:
         return Run(error="analysis time budget exhausted", timed_out=True)
+    source, compatibility = prepare(source)
     try:
         memory_mb = max(64, min(2048, int(os.environ.get("SANDBOX_MEMORY_MB", "768"))))
     except ValueError:
@@ -85,7 +88,7 @@ def run(source, seconds=10, queries=None, http=None):
     job = {"source": source, "seconds": seconds, "query_seconds": min(10, seconds), "memory_mb": memory_mb,
            "queries": [[n, [list(a) for a in args]] for n, args in queries or []], "http": http or {}}
     out, timed_out = _spawn(job, remaining(seconds + (min(10, seconds) if queries else 0) + 3))
-    r = Run(timed_out=timed_out)
+    r = Run(timed_out=timed_out, compatibility=compatibility)
     for ev in _lines(out):
         k, v = ev.get("k"), ev.get("v", "")
         if k == "capture":
@@ -159,7 +162,9 @@ def _clean_constants(items):
     return keep
 
 
-def syntax_ok(source):
-    """True when Lua 5.1 accepts the chunk (Luau-only syntax reports False)."""
+def syntax_ok(source, compatible=True):
+    """Compile only. Optionally apply the same compatibility as sandbox.run."""
+    if compatible:
+        source, _ = prepare(source)
     out, _ = _spawn({"source": source, "mode": "check"}, 10)
     return any(ev.get("k") == "ok" for ev in _lines(out))

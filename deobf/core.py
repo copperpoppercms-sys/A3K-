@@ -42,6 +42,7 @@ class Result:
     elapsed_seconds: float = 0
     stop_reason: str = "complete"
     unresolved_urls: list = field(default_factory=list)
+    compatibility: list = field(default_factory=list)
 
     @property
     def shows_recon(self):
@@ -66,6 +67,8 @@ class Result:
 
     @property
     def output_kind(self):
+        if self.stop_reason == "syntax-error":
+            return "unexecuted-source"
         if self.shows_recon:
             return "behavior-trace"
         if self.unresolved_urls:
@@ -165,6 +168,7 @@ def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
             if note not in res.notes:
                 res.notes.append(note)
         ran = sandbox.run(exec_src, seconds, http=http)
+        res.compatibility += [note for note in ran.compatibility if note not in res.compatibility]
         findings.extend(logger.scan_runtime("\n".join(ran.urls + ran.posts + ran.constants)))
         while fetch and len(http) < MAX_FETCH and remaining() > 0:
             new = [u for u in ran.gets if u not in http][: MAX_FETCH - len(http)]
@@ -180,6 +184,7 @@ def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
                     http[u] = ""
                     res.notes.append("fetch failed %s: %s" % (u, e))
             ran = sandbox.run(exec_src, seconds, http=http)
+            res.compatibility += [note for note in ran.compatibility if note not in res.compatibility]
             findings.extend(logger.scan_runtime("\n".join(ran.urls + ran.posts + ran.constants)))
         unresolved.extend(url for url in ran.unresolved_gets if url not in unresolved)
         if ran.unresolved_gets and ran.captures and not ran.captures[-1].strip():
@@ -207,7 +212,9 @@ def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
             res.notes.append("sandbox hit wall-clock limit")
             res.stop_reason = "time-budget" if remaining() <= 0 else "sandbox-time-limit"
         elif ran.error:
-            res.stop_reason = "runtime-error"
+            res.stop_reason = "syntax-error" if ran.error.startswith("syntax:") else "runtime-error"
+            if res.stop_reason == "syntax-error":
+                res.notes.append("script did not execute; static changes are not verified payload recovery")
     res.unresolved_urls = unresolved
     if unresolved:
         if res.stop_reason == "complete":
@@ -243,6 +250,7 @@ def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
     for f in findings + res.findings + logger.scan_runtime(blob):
         merged.setdefault((f.id, f.snippet), f)
     res.findings = list(merged.values())
+    res.notes.extend("compatibility: " + note for note in res.compatibility)
     return res
 
 

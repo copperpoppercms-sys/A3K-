@@ -11,6 +11,13 @@ Pipeline in `deobf/core.py::deobfuscate`:
 6. `luaast.py` / `simplify.py` / `astclean.py` - parser, simplifier and the verified cleanup (runs before/after, keeps original if behaviour differs).
 7. `recon.py` - turns the raw call trace into script-like output; `logger.py` - stealer/exfil rules and removal; `fetch.py` - SSRF-guarded downloads.
 
+`compat.py` rewrites floor-division expression spans only in sandbox copies. The
+same preparation applies to `sandbox.run` and compile-only `sandbox.syntax_ok`;
+`syntax_ok(source, compatible=False)` checks the raw Lua 5.1 syntax. It preserves
+source text outside those expressions and uses a fresh local helper with captured
+standard functions. This provides double-precision compatibility, not a full
+Luau/Lua 5.3 implementation. Syntax failures are labeled as unexecuted source.
+
 `budget.py` shares an analysis deadline across decoder, sandbox, and AST verification
 runs. `Result.to_report()` provides serializable results and layer history. Worker
 completion is required for AST behavior verification; identical worker failures

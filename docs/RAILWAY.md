@@ -31,6 +31,10 @@ Choose limits that leave room in the Railway service allocation.
 - **Job time limit**: the job is stopped, its worker group is killed, and the queue
   continues. Use `.static`, submit a smaller script, or adjust the time limit within
   the supported 5–300 second range.
+- **Syntax error / unexecuted-source**: the script did not run. Minor static edits
+  do not prove that the protected payload was reached. The sandbox now translates
+  floor division (`//`) in its execution copy; other Luau-only syntax may remain
+  unsupported. Check the `compatibility` and `error` fields in `.report`.
 - **Health check failed**: remove an HTTP health-check path configured for this
   service. The bot connects outward to Discord; it does not serve a website.
 - **Queue full**: let current work finish, then retry. Raising concurrency increases

@@ -150,6 +150,9 @@ async def _file_error(ctx, name, error):
 
 def _summary(name, r):
     emb = discord.Embed(title=("A3K Deobfuscator: %s" % name)[:256], colour=0x57F287 if r.changed else 0x99AAB5)
+    if r.stop_reason == "syntax-error":
+        emb.colour = 0xFEE75C
+        emb.add_field(name="execution", value="The script did not execute. Static edits are not verified payload recovery.", inline=False)
     emb.set_footer(text="Signature scores are heuristic. Recovery is best effort; VM output may be a behavior trace.")
     top = ", ".join("%s %d/100" % tuple(c) for c in r.candidates[:3]) or "no signature match"
     emb.add_field(name="engine / match score", value="%s (%d/100)" % (r.engine, r.confidence))
