@@ -192,13 +192,14 @@ class RemoveLogger(discord.ui.Button):
 
 
 class EnginePicker(discord.ui.Select):
-    def __init__(self, name, raw, engines, group=1):
+    def __init__(self, name, raw, engines, group=1, follow=None):
         super().__init__(placeholder="re-run as another engine (group %d)" % group, options=[discord.SelectOption(label=e.label, value=e.name) for e in engines])
         self.name, self.raw = name, raw
+        self.follow = FETCH if follow is None else follow
 
     async def callback(self, inter):
         await inter.response.defer(thinking=True)
-        r = await _job(deobfuscate, self.raw, engine=self.values[0], fetch=FETCH)
+        r = await _job(deobfuscate, self.raw, engine=self.values[0], fetch=self.follow)
         await inter.followup.send(embed=_summary(self.name, r), file=_file(r.best, "deobf_" + self.name))
 
 
@@ -212,28 +213,38 @@ class JobView(discord.ui.View):
 
 
 class ResultView(JobView):
-    def __init__(self, name, raw, r):
+    def __init__(self, name, raw, r, follow=None):
         super().__init__(timeout=900)
         if r.is_logger:
             self.add_item(RemoveLogger(name, r.body, r.shows_recon))
         # Discord allows 25 options per select and five rows per view.
         for start in range(0, len(ENGINES), 25):
-            self.add_item(EnginePicker(name, raw, ENGINES[start:start + 25], start // 25 + 1))
+            self.add_item(EnginePicker(name, raw, ENGINES[start:start + 25], start // 25 + 1, follow=follow))
 
 
-async def run_deobf(ctx, arg, engine=None, dynamic=True):
+async def run_deobf(ctx, arg, engine=None, dynamic=True, follow=None, include_report=False):
     items = await gather_inputs(ctx, arg)
+    follow = FETCH if follow is None else follow
     async with ctx.typing():
-        async for name, raw, r in _batch(items, deobfuscate, engine=engine, fetch=FETCH, dynamic=dynamic):
+        async for name, raw, r in _batch(items, deobfuscate, engine=engine, fetch=follow, dynamic=dynamic):
             if isinstance(r, Exception):
                 await _file_error(ctx, name, r)
                 continue
-            await ctx.reply(embed=_summary(name, r), file=_file(r.best, "deobf_" + os.path.basename(name)), view=ResultView(name, raw, r), mention_author=False)
+            files = [_file(r.best, "deobf_" + os.path.basename(name))]
+            if include_report:
+                files.append(_file(json.dumps(r.to_report(), indent=2, ensure_ascii=True), "report_" + name + ".json"))
+            await ctx.reply(embed=_summary(name, r), files=files, view=ResultView(name, raw, r, follow=follow), mention_author=False)
 
 
 @bot.command(name="deobf")
 async def deobf_cmd(ctx, *, arg=""):
     await run_deobf(ctx, arg)
+
+
+@bot.command(name="keydeobf")
+async def keydeobf_cmd(ctx, *, arg=""):
+    """Per-job public loader fetching plus source/trace and a diagnostic report."""
+    await run_deobf(ctx, arg, follow=True, include_report=True)
 
 
 @bot.command(name="static")
@@ -362,6 +373,7 @@ async def engines_cmd(ctx):
 HELP = """**A3K Deobfuscator**
 **Deobfuscation**
 `.deobf` - detect + pick engine (unified panel)
+`.keydeobf` - follow public loaders, attempt recovery, and attach a report; server authentication may still be needed
 `.static` - decode literal loaders without running the script
 `.report` - download JSON evidence, layer history, results, and findings
 `.status` - running jobs, queue, and limits

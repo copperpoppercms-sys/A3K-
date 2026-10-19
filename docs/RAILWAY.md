@@ -54,6 +54,12 @@ downloaded Lua file (or its direct URL) to analyze the next stage, or explicitly
 enable nested fetching with `ALLOW_SCRIPT_FETCH=1`. Only public-address GETs are
 supported, with the existing size and time limits.
 
+For a single command with no environment-variable changes, use
+`.keydeobf <URL>` or `.keydeobf` with an attachment. It enables public nested
+downloads for that job only and attaches both output and a diagnostic report.
+It is a recovery attempt using the existing engine, not automatic key acquisition
+or successful authentication to a protected service.
+
 An unresolved URL alone is not evidence of a key system. A server-side key check
 may require a valid authorized session before it supplies a payload. Missing
 responses cannot validate AST cleanup. A partial sandbox result is not evidence

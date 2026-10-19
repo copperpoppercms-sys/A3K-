@@ -95,7 +95,7 @@ python -m pytest
 1. Create an app at https://discord.com/developers, enable **Message Content Intent**, copy the bot token, invite with `bot` scope + send messages / attach files.
 2. `DISCORD_TOKEN=... python -m bot.bot` (optional: `BOT_PREFIX=.`).
 
-Commands: `.deobf` `.<engine>` `.static` `.report` `.status` `.detect` `.l`
+Commands: `.deobf` `.keydeobf` `.<engine>` `.static` `.report` `.status` `.detect` `.l`
 `.get <url>` `.envlog` `.engines` `.help`. Input = up to 10 attachments, a code block,
 a url, or a reply to a sample. `.get` only fetches public addresses (redirects re-checked)
 up to 2 MB. A failed file does not discard successful results from the same batch.
@@ -109,6 +109,13 @@ The analysis process and its descendants inherit that per-process memory ceiling
 not a cap on the total memory of your hosting service. Start with one concurrent
 job on Railway; raising concurrency can increase both RAM usage and billing.
 Reports/attachments larger than 7 MB are sent as gzip files.
+
+Use `.keydeobf <URL>` (or attach a Lua file) to enable public nested downloads for
+that job without changing Railway variables. It returns the best-effort source or
+trace and a JSON report together. Engine-picker retries retain this fetching mode.
+It uses the same recovery engine and limits as `.deobf`; it does not supply keys,
+authenticate to licensing services, or guarantee original source recovery. A valid
+authorized session may still be required before a server supplies its payload.
 
 Missing/invalid bot tokens and disabled Message Content Intent get explicit startup
 messages. A Discord bot does not need an HTTP health-check path. See
