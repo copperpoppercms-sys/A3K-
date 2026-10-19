@@ -14,6 +14,7 @@ class Run:
     captures: list = field(default_factory=list)  # loadstring/load chunks, in order
     trace: list = field(default_factory=list)  # recorded API calls
     urls: list = field(default_factory=list)
+    gets: list = field(default_factory=list)  # urls fetched through HttpGet / GET request()
     posts: list = field(default_factory=list)
     prints: list = field(default_factory=list)
     dec: list = field(default_factory=list)  # (name, args, result) recorded from instrumented decoders
@@ -73,9 +74,9 @@ def _parse_dec(payload):
         return None
 
 
-def run(source, seconds=10, queries=None):
+def run(source, seconds=10, queries=None, http=None):
     """queries: [(decoder_name, [("s"|"n", value), ...])] evaluated against instrumented decoders after the script ends."""
-    job = {"source": source, "seconds": seconds, "queries": [[n, [list(a) for a in args]] for n, args in queries or []]}
+    job = {"source": source, "seconds": seconds, "queries": [[n, [list(a) for a in args]] for n, args in queries or []], "http": http or {}}
     out, timed_out = _spawn(job, seconds + 18)
     r = Run(timed_out=timed_out)
     for ev in _lines(out):
@@ -86,6 +87,9 @@ def run(source, seconds=10, queries=None):
             r.trace.append(v)
         elif k == "url" and v not in r.urls:
             r.urls.append(v)
+        elif k == "get":
+            if v not in r.gets:
+                r.gets.append(v)
         elif k == "post":
             r.posts.append(v)
         elif k == "dec":

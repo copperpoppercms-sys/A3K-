@@ -5,3 +5,4 @@ Real obfuscator output, generated from `tests/samples/src1.lua` with the open-so
 
 `herc_heavy.lua` is kept because Hercules' own output raises `attempt to perform arithmetic on global 'i'` at run time
 (its garbage-code pass moves a loop body out of scope); the tests assert we report that faithfully.
+- `ib2_basic.lua`: IronBrew 2 (Trollicus/ironbrew-2, built locally on .NET 8 with Lua 5.1 tooling), default settings

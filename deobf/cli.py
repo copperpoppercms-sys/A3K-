@@ -12,6 +12,7 @@ def main(argv=None):
     ap.add_argument("-o", "--out", help="write result here (default stdout)")
     ap.add_argument("--detect", action="store_true", help="only identify the obfuscator")
     ap.add_argument("--trace", action="store_true", help="print observable behaviour instead of deobfuscating")
+    ap.add_argument("--fetch", action="store_true", help="download HttpGet urls the script requests (public addresses only) and follow them")
     ap.add_argument("--static", action="store_true", help="skip sandbox execution")
     a = ap.parse_args(argv)
     raw = sys.stdin.buffer.read() if a.file == "-" else open(a.file, "rb").read()
@@ -25,7 +26,7 @@ def main(argv=None):
     if a.trace:
         text = trace_behavior(src)[0]
     else:
-        r = deobfuscate(src, engine=a.engine, dynamic=not a.static)
+        r = deobfuscate(src, engine=a.engine, dynamic=not a.static, fetch=a.fetch)
         print("engine=%s (%d%%) layers=%d notes=%s" % (r.engine, r.confidence, r.layers, ",".join(r.notes) or "-"), file=sys.stderr)
         for f in r.findings:
             print("logger-scan [%s] line %d: %s" % (f.severity, f.line, f.desc), file=sys.stderr)

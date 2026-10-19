@@ -11,12 +11,17 @@ Lua / Luau deobfuscator with a Discord bot front-end (`.deobf`, `.luraph`, `.wea
 
 ## Coverage (read before trusting it)
 
-| kind | result |
-| --- | --- |
-| loadstring-layered / string-decoder protectors (wearedevs-style xor decoder, string tables, literal `loadstring`) | recovered source |
-| VM protectors (Luraph, IronBrew, MoonSec, Moonveil, IronVeil, MWP, Luast) | **not decompiled** - you get the reconstructed behaviour: every API call, url, POST, and every string the VM decoded (via `string.char`/`table.concat`/`gsub`/`format`) |
+Validated against **real output** of obfuscators built from their public source (`tests/samples/`):
 
-There is no per-version bytecode lifter for any VM protector. "Works on every Luraph" is not true: Luraph changes its VM between releases and may detect the sandbox. Tested only on synthetic samples written from the known output shapes, not on real protected scripts.
+| obfuscator | result |
+| --- | --- |
+| Prometheus Weak / Medium / Strong (VM + encrypted constant array) | full behaviour reconstruction, every API call + arguments + prints, decoded strings |
+| Hercules light / balanced / heavy | light: behaviour; balanced: source recovered (string decoder inlined); heavy: behaviour up to the point Hercules' own output crashes |
+| IronBrew 2 (default settings) | full behaviour reconstruction |
+
+Not tested against real output (no samples reachable): WeAreDevs, Luraph (any version), MoonSec, Moonveil, IronVeil, MWP, Luast. They go through the same pipeline, but "works on every Luraph" is **not** claimed - Luraph changes its VM between releases and may detect the sandbox. Send real samples to extend this table.
+
+How VM protectors are handled: there is no bytecode lifter. The script is run in the sandbox and everything it does is recorded (API calls in order with arguments, urls, POSTs, prints, decoded strings). `--fetch` / `ALLOW_SCRIPT_FETCH=1` additionally downloads urls passed to `HttpGet` (public addresses only) so `loadstring(game:HttpGet(url))()` loaders can be followed.
 
 Limits: VM-based protectors (Luraph, IronBrew, MoonSec, ...) never hand their payload to `loadstring`, so you get the behaviour trace (`.l`), not source. Luau-only syntax (`+=`, `continue`, type annotations) does not compile in the Lua 5.1 sandbox; static passes still run, the dynamic stage reports a syntax error. Signatures are heuristics.
 

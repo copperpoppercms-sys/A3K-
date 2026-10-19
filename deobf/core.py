@@ -2,6 +2,9 @@
 from dataclasses import dataclass, field
 
 from . import decrypt, logger, passes, sandbox
+from . import fetch as fetchmod
+
+MAX_FETCH = 8
 from .detect import BY_NAME, detect, obfuscation_score
 
 
@@ -48,13 +51,16 @@ def _resolve_engine(src, forced):
     return "unknown", 0, ranked, score
 
 
-def deobfuscate(src, engine=None, dynamic=True, max_layers=8, seconds=10):
+def deobfuscate(src, engine=None, dynamic=True, max_layers=8, seconds=10, fetch=False):
+    """fetch=True lets scripts that `loadstring(game:HttpGet(url))()` pull their next stage: the url is downloaded
+    by this process (public addresses only, see fetch.py) and handed to the sandbox as the HttpGet result."""
     if engine and engine not in BY_NAME:
         raise ValueError("unknown engine %r" % engine)
     original = cur = src
     eng, conf, ranked, score = _resolve_engine(cur, engine)
     res = Result(source=cur, engine=eng, confidence=conf, candidates=ranked, obf_score=score)
     ran = None
+    http = {}
     for layer in range(max_layers):
         cur, notes = passes.run_static(cur)
         res.notes += ["static:" + n for n in notes]
@@ -72,7 +78,19 @@ def deobfuscate(src, engine=None, dynamic=True, max_layers=8, seconds=10):
             continue
         if not dynamic:
             break
-        ran = sandbox.run(cur, seconds)
+        ran = sandbox.run(cur, seconds, http=http)
+        while fetch and len(http) < MAX_FETCH:
+            new = [u for u in ran.gets if u not in http][: MAX_FETCH - len(http)]
+            if not new:
+                break
+            for u in new:
+                try:
+                    http[u] = fetchmod.fetch(u)
+                    res.notes.append("fetched " + u)
+                except fetchmod.FetchError as e:
+                    http[u] = ""
+                    res.notes.append("fetch failed %s: %s" % (u, e))
+            ran = sandbox.run(cur, seconds, http=http)
         if ran.captures and ran.captures[-1] != cur:
             cur, res.layers = ran.captures[-1], res.layers + 1
             res.notes.append("captured loadstring layer %d" % res.layers)
@@ -100,7 +118,7 @@ def deobfuscate(src, engine=None, dynamic=True, max_layers=8, seconds=10):
 
 def reconstruct(r):
     """Observable behaviour of a sandbox run as a pseudo-Luau script."""
-    if not (r.trace or r.urls or r.constants or r.captures or r.prints or r.posts):
+    if not (r.trace or r.urls or r.constants or r.captures or r.posts):
         return ""
     out = ["-- reconstructed observable behaviour (api calls the script made, in order)"]
     for u in r.urls:
@@ -108,8 +126,6 @@ def reconstruct(r):
     out += r.trace
     for i, c in enumerate(r.captures, 1):
         out.append("-- loadstring chunk %d (%d bytes)" % (i, len(c)))
-    for p in r.prints:
-        out.append("-- print: " + p)
     for p in r.posts:
         out.append("-- POST " + p)
     if r.error:

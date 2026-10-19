@@ -13,14 +13,14 @@ def load(name):
         return f.read().decode("latin-1")
 
 
-@pytest.mark.parametrize("name", ["prom_Weak.lua", "prom_Medium.lua", "prom_Strong.lua", "herc_light.lua"])
+@pytest.mark.parametrize("name", ["prom_Weak.lua", "prom_Medium.lua", "prom_Strong.lua", "herc_light.lua", "ib2_basic.lua"])
 def test_behaviour_recovered(name):
     r = deobfuscate(load(name))
-    for line in ('game:GetService("Players")', NOTIFY, "-- print: Hello, Player!", "-- print: fib(10) =\t55"):
+    for line in ('game:GetService("Players")', NOTIFY, 'print("Hello, Player!")', 'print("fib(10) =", 55)'):
         assert line in (r.recon or r.best), (name, line)
 
 
-@pytest.mark.parametrize("name,engine", [("prom_Weak.lua", "prometheus"), ("prom_Medium.lua", "prometheus"), ("prom_Strong.lua", "prometheus"), ("herc_light.lua", "hercules"), ("herc_heavy.lua", "hercules")])
+@pytest.mark.parametrize("name,engine", [("prom_Weak.lua", "prometheus"), ("prom_Medium.lua", "prometheus"), ("prom_Strong.lua", "prometheus"), ("herc_light.lua", "hercules"), ("herc_heavy.lua", "hercules"), ("ib2_basic.lua", "ironbrew")])
 def test_engine_detected(name, engine):
     assert deobfuscate(load(name), dynamic=False).engine == engine
 

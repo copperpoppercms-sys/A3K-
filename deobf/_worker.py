@@ -5,6 +5,7 @@ import sys
 
 BOOT = r'''
 local emit, real_loadstring, real_pcall, real_setfenv, real_clock, sethook, real_cocreate, real_cowrap, LIMIT, DEADLINE = ...
+local HTTP = rawget(_G, "__HTTP_MAP") or {}
 local env = {}
 local proxies = setmetatable({}, {__mode = "k"})
 local ntrace = 0
@@ -66,7 +67,16 @@ mk = function(name)
       T(text)
       note_urls(args)
       local m = name:match("([^.]+)$")
-      if m == "HttpGet" or m == "HttpGetAsync" or m == "HttpPost" or m == "PostAsync" or m == "GetAsync" or m == "RequestAsync" then return "" end
+      if m == "HttpGet" or m == "HttpGetAsync" then
+        local url = args[1]
+        if proxies[url] then url = args[2] end
+        if type(url) == "string" then
+          emit("get", url)
+          if HTTP[url] then return HTTP[url] end
+        end
+        return ""
+      end
+      if m == "HttpPost" or m == "PostAsync" or m == "GetAsync" or m == "RequestAsync" then return "" end
       return mk(text)
     end,
     __tostring = function() return name end,
@@ -92,7 +102,12 @@ local function http_request(opts)
     note_urls({n = 1, opts})
     if opts.Body then emit("post", tostring(opts.Url) .. " <- " .. tostring(opts.Body):sub(1, 400)) end
   end
-  return {Body = "", StatusCode = 200, Success = true, Headers = {}}
+  local body = ""
+  if type(opts) == "table" and type(opts.Url) == "string" and (opts.Method == nil or tostring(opts.Method):upper() == "GET") then
+    emit("get", opts.Url)
+    body = HTTP[opts.Url] or ""
+  end
+  return {Body = body, StatusCode = 200, Success = true, Headers = {}}
 end
 
 for _, k in ipairs({"assert", "error", "ipairs", "next", "pairs", "pcall", "xpcall", "rawequal", "rawget", "rawset", "select", "tonumber", "tostring", "type", "unpack", "setmetatable", "getmetatable", "collectgarbage"}) do
@@ -222,7 +237,12 @@ env.__QUERY = function(name, ...)
 end
 env.getfenv = function() return env end
 env.setfenv = function(f, e) if type(f) == "function" then return f end return f end
-env.print = function(...) local t = {} for i = 1, select("#", ...) do t[#t + 1] = tostring((select(i, ...))) end emit("print", table.concat(t, "\t")) end
+env.print = function(...)
+  local t, shown = {}, {}
+  for i = 1, select("#", ...) do local v = (select(i, ...)) t[#t + 1] = tostring(v) shown[#shown + 1] = qt(v, 2) end
+  emit("print", table.concat(t, "\t"))
+  T("print(" .. table.concat(shown, ", ") .. ")")
+end
 env.warn = env.print
 env.wait = function() return 0.03, 0 end
 env.delay = function(_, f) if type(f) == "function" then real_pcall(f) end end
@@ -296,6 +316,7 @@ def main():
     clock = lua.eval("os.clock")
     deadline = clock() + job.get("seconds", 10)
     loader = lua.eval("function(code, ...) return assert(loadstring(code))(...) end")
+    g[b"__HTTP_MAP"] = lua.table_from({k.encode("latin-1"): v.encode("latin-1") for k, v in (job.get("http") or {}).items()})
     runner, env, extend = loader(
         BOOT.encode(), emit, g.loadstring, g.pcall, g.setfenv, clock, g.debug.sethook,
         g.coroutine.create, g.coroutine.wrap, None, deadline,

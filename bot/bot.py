@@ -14,6 +14,7 @@ from deobf.fetch import FetchError, fetch
 PREFIX = os.environ.get("BOT_PREFIX", ".")
 MAX_FILES = 10
 MAX_BYTES = 2 * 1024 * 1024
+FETCH = os.environ.get("ALLOW_SCRIPT_FETCH") == "1"  # let scripts pull their next stage via HttpGet (public urls only)
 JOBS = asyncio.Semaphore(int(os.environ.get("MAX_JOBS", "4")))
 EXTS = (".lua", ".luau", ".txt")
 URL_RE = re.compile(r"https?://\S+")
@@ -114,7 +115,7 @@ class EnginePicker(discord.ui.Select):
 
     async def callback(self, inter):
         await inter.response.defer(thinking=True)
-        r = await _job(deobfuscate, self.raw, engine=self.values[0])
+        r = await _job(deobfuscate, self.raw, engine=self.values[0], fetch=FETCH)
         await inter.followup.send(embed=_summary(self.name, r), file=_file(r.best, "deobf_" + self.name))
 
 
@@ -129,7 +130,7 @@ class ResultView(discord.ui.View):
 async def run_deobf(ctx, arg, engine=None):
     items = await gather_inputs(ctx, arg)
     async with ctx.typing():
-        results = await asyncio.gather(*[_job(deobfuscate, text, engine=engine) for _, text in items])
+        results = await asyncio.gather(*[_job(deobfuscate, text, engine=engine, fetch=FETCH) for _, text in items])
     for (name, raw), r in zip(items, results):
         await ctx.reply(embed=_summary(name, r), file=_file(r.best, "deobf_" + os.path.basename(name)), view=ResultView(name, raw, r), mention_author=False)
 
@@ -179,7 +180,7 @@ class FetchView(discord.ui.View):
     @discord.ui.button(label="Deobfuscate", style=discord.ButtonStyle.success)
     async def deob(self, inter, _):
         await inter.response.defer(thinking=True)
-        r = await _job(deobfuscate, self.raw)
+        r = await _job(deobfuscate, self.raw, fetch=FETCH)
         await inter.followup.send(embed=_summary(self.name, r), file=_file(r.best, "deobf_" + self.name), view=ResultView(self.name, self.raw, r))
 
     @discord.ui.button(label="Env Log", emoji="🧾", style=discord.ButtonStyle.secondary)
@@ -208,7 +209,7 @@ async def envlog_cmd(ctx, *, arg=""):
         return
     name, text = pick_final(files)
     async with ctx.typing():
-        r = await _job(deobfuscate, text)
+        r = await _job(deobfuscate, text, fetch=FETCH)
     await ctx.reply("analysed deepest capture: **%s** (%d file(s) uploaded)" % (name, len(files)), embed=_summary(name, r), file=_file(r.best, "deobf_" + name), view=ResultView(name, text, r), mention_author=False)
 
 
