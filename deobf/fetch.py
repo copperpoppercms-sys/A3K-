@@ -1,5 +1,6 @@
 """URL fetcher with SSRF guard (public addresses only, re-checked on every redirect) and a size cap."""
 import ipaddress
+import re
 import socket
 import urllib.error
 import urllib.parse
@@ -43,3 +44,19 @@ def fetch(url, timeout=15):
     if len(data) > MAX_BYTES:
         raise FetchError("response larger than %d bytes" % MAX_BYTES)
     return data.decode("latin-1")
+
+
+_URL_RE = re.compile(r"https?://[^\s\"'<>)]+")
+_JUNK_RE = re.compile(r"^[\s\"'()<>;,.]*$")
+
+
+def extract_loader_url(text):
+    """The url when `text` is a bare link or a one-line loader like loadstring(game:HttpGet("url"))(), else None."""
+    text = text.strip()
+    urls = _URL_RE.findall(text)
+    if len(urls) != 1 or len(text) > 600:
+        return None
+    rest = text.replace(urls[0], "", 1)
+    if _JUNK_RE.match(rest) or re.search(r"HttpGet|loadstring", rest):
+        return urls[0]
+    return None

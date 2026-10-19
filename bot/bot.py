@@ -9,7 +9,7 @@ from discord.ext import commands
 
 from deobf import ENGINES, deobfuscate, detect, logger, trace_behavior
 from deobf.envlog import LOADER, pick_final
-from deobf.fetch import FetchError, fetch
+from deobf.fetch import FetchError, extract_loader_url, fetch
 
 
 def load_env(path=".env"):
@@ -32,7 +32,6 @@ MAX_BYTES = 2 * 1024 * 1024
 FETCH = os.environ.get("ALLOW_SCRIPT_FETCH") == "1"  # let scripts pull their next stage via HttpGet (public urls only)
 JOBS = asyncio.Semaphore(int(os.environ.get("MAX_JOBS", "4")))
 EXTS = (".lua", ".luau", ".txt")
-URL_RE = re.compile(r"https?://\S+")
 FENCE_RE = re.compile(r"```(?:lua|luau)?\n?(.*?)```", re.S)
 ENGINE_NAMES = [e.name for e in ENGINES]
 
@@ -74,9 +73,9 @@ async def gather_inputs(ctx, arg):
         fence = FENCE_RE.search(arg)
         if fence:
             items = [("paste.lua", fence.group(1))]
-        elif URL_RE.fullmatch(arg.strip("<>")):
+        elif extract_loader_url(arg.strip("<>")):
             try:
-                items = [("fetched.lua", await asyncio.to_thread(fetch, arg.strip("<>")))]
+                items = [("fetched.lua", await asyncio.to_thread(fetch, extract_loader_url(arg.strip("<>"))))]
             except FetchError as e:
                 raise commands.UserInputError("fetch failed: %s" % e)
         else:

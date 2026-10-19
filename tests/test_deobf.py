@@ -117,3 +117,14 @@ def test_httpget_chain_follows_fetched_stage():
     r = sandbox.run(src, http={"https://example.invalid/stage2.lua": 'print("stage2 ran")'})
     assert r.gets == ["https://example.invalid/stage2.lua"] and r.captures == ['print("stage2 ran")'] and r.prints == ["stage2 ran"]
     assert sandbox.run(src).captures == [""]
+
+
+def test_extract_loader_url():
+    from deobf.fetch import extract_loader_url
+
+    u = "https://gist.githubusercontent.com/x/abc/raw/1/gistfile1.txt"
+    assert extract_loader_url(u) == u
+    assert extract_loader_url(u + '"))()') == u
+    assert extract_loader_url('loadstring(game:HttpGet("%s"))()' % u) == u
+    assert extract_loader_url('print("https://example.com")') is None
+    assert extract_loader_url("local a = 1") is None
