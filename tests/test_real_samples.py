@@ -51,3 +51,12 @@ def test_hercules_web_v162_bug_patched_so_script_runs():
     assert 'game:GetService("StarterGui"):SetCore("SendNotification", {' in r.recon
     assert 'print("congrats it worked :)!")' in r.recon
     assert any("hercules vm operand clobber" in n for n in r.notes)
+
+
+def test_best_is_script_only_for_vm_output():
+    r = deobfuscate(load("herc_web_162_congrats.lua"))
+    assert r.best.splitlines() == [
+        'game:GetService("StarterGui")',
+        'game:GetService("StarterGui"):SetCore("SendNotification", {Text = "congrats it worked :)!", Title = "Success", Duration = 5})',
+        'print("congrats it worked :)!")',
+    ]

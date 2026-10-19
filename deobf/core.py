@@ -33,7 +33,8 @@ class Result:
         """Readable output: recovered source, or the behaviour reconstruction for vm payloads that never reach loadstring."""
         vm = BY_NAME.get(self.engine) and BY_NAME[self.engine].vm
         if self.recon and (not self.changed or (not self.layers and (vm or self.obf_after >= 25))):
-            return self.recon
+            code = [ln for ln in self.recon.splitlines() if not ln.startswith("--")]
+            return "\n".join(code) if code else self.recon
         return self.source
 
     @property
