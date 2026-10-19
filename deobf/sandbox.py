@@ -16,6 +16,7 @@ class Run:
     urls: list = field(default_factory=list)
     posts: list = field(default_factory=list)
     prints: list = field(default_factory=list)
+    dec: list = field(default_factory=list)  # (name, args, result) recorded from instrumented decoders
     constants: list = field(default_factory=list)  # decoded strings built via char/concat/gsub/format
     error: str = ""
     timed_out: bool = False
@@ -51,8 +52,31 @@ def _lines(raw):
             continue
 
 
-def run(source, seconds=10):
-    out, timed_out = _spawn({"source": source, "seconds": seconds}, seconds + 8)
+def _read_enc(buf, pos):
+    colon = buf.index(":", pos)
+    n = int(buf[pos:colon])
+    return buf[colon + 1:colon + 1 + n], colon + 1 + n
+
+
+def _parse_dec(payload):
+    try:
+        name, p = _read_enc(payload, 0)
+        blob, p = _read_enc(payload, p)
+        result, _ = _read_enc(payload, p)
+        args, q = [], 0
+        while q < len(blob):
+            kind = blob[q]
+            val, q = _read_enc(blob, q + 1)
+            args.append(("s", val) if kind == "s" else ("n", float(val)))
+        return name, tuple(args), result
+    except (ValueError, IndexError):
+        return None
+
+
+def run(source, seconds=10, queries=None):
+    """queries: [(decoder_name, [("s"|"n", value), ...])] evaluated against instrumented decoders after the script ends."""
+    job = {"source": source, "seconds": seconds, "queries": [[n, [list(a) for a in args]] for n, args in queries or []]}
+    out, timed_out = _spawn(job, seconds + 18)
     r = Run(timed_out=timed_out)
     for ev in _lines(out):
         k, v = ev.get("k"), ev.get("v", "")
@@ -64,22 +88,35 @@ def run(source, seconds=10):
             r.urls.append(v)
         elif k == "post":
             r.posts.append(v)
+        elif k == "dec":
+            d = _parse_dec(v)
+            if d:
+                r.dec.append(d)
+        elif k == "qres":
+            name, args, res = json.loads(v)
+            r.dec.append((name, tuple((a[0], float(a[1]) if a[0] == "n" else a[1]) for a in args), res))
         elif k == "const":
             r.constants.append(v)
         elif k == "print":
             r.prints.append(v)
         elif k == "error":
             r.error = v
+    r.constants = _clean_constants(r.constants)
     return r
 
 
-def decrypt(prefix, name, calls, seconds=15):
-    """Evaluate decoder `name` (defined by `prefix`) for each argument tuple; None per failed call."""
-    out, _ = _spawn({"mode": "decrypt", "source": prefix, "name": name, "calls": calls, "seconds": seconds}, seconds + 8)
-    for ev in _lines(out):
-        if ev.get("k") == "decrypt":
-            return json.loads(ev["v"])
-    return None
+def _clean_constants(items):
+    """Drop fragments of longer strings and short random-looking junk produced while a vm assembles its string pool."""
+    uniq = list(dict.fromkeys(items))
+    big = "\x00".join(uniq)
+    keep = []
+    for c in uniq:
+        if big.count(c) > 1:
+            continue  # substring of another captured string
+        if len(c) <= 8 and any(ch.isdigit() for ch in c) and any(ch.isalpha() for ch in c) and not c.isidentifier():
+            continue
+        keep.append(c)
+    return keep
 
 
 def syntax_ok(source):

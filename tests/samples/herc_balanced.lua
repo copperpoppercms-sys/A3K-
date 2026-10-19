@@ -1,0 +1,12 @@
+-- Lua 5.3+ / Luau compatibility polyfills
+if not math.ldexp then math.ldexp = function(x, n) return x * 2 ^ n end end
+if not math.frexp then math.frexp = function(x)
+    if x == 0 then return 0, 0 end
+    local exp = math.floor(math.log(math.abs(x)) / math.log(2)) + 1
+    local mantissa = x / 2 ^ exp
+    return mantissa, exp
+end end
+if not loadstring and load then loadstring = load end
+if not loadstring then loadstring = function(s) return load(s) end end
+
+local thing=2854;local thing2=2854;local counter=0;while thing==thing2 and counter<1 do thing=thing+1;counter=counter+1;if thing==thing2 then local tbl={1,2,3};table.sort(tbl,function(a,b)return a>b end); else do local KYsyIaftcQv,TggtmjpikAp,ZCiopKFkeUSV,SxVDbaBLHGkw;KYsyIaftcQv=print;TggtmjpikAp=string.char;ZCiopKFkeUSV=table.concat;SxVDbaBLHGkw=table.insert;local function TwOxaGMQRq(dDZAvAuq) return(dDZAvAuq>=48 and dDZAvAuq<=57)or(dDZAvAuq>=65 and dDZAvAuq<=90)or(dDZAvAuq>=97 and dDZAvAuq<=122) end local function MXYbNQZchcJJ(EThOPoTvqF,EHJPNinMOW) local IjgMlLaCWXb={};for i=1,#EThOPoTvqF do local dDZAvAuq=EThOPoTvqF:byte(i);if TwOxaGMQRq(dDZAvAuq)then local vRtLJJypRpI if dDZAvAuq>=48 and dDZAvAuq<=57 then vRtLJJypRpI=((dDZAvAuq-48-EHJPNinMOW+10)%10)+48 elseif dDZAvAuq>=65 and dDZAvAuq<=90 then vRtLJJypRpI=((dDZAvAuq-65-EHJPNinMOW+26)%26)+65 elseif dDZAvAuq>=97 and dDZAvAuq<=122 then vRtLJJypRpI=((dDZAvAuq-97-EHJPNinMOW+26)%26)+97 end table.insert(IjgMlLaCWXb,string.char(vRtLJJypRpI)) else table.insert(IjgMlLaCWXb,string.char(dDZAvAuq)) end end return table.concat(IjgMlLaCWXb) end local UumRHYxxsw=game:GetService(MXYbNQZchcJJ("Njywcpq",24));local hLYTFitvfHO=UumRHYxxsw.LocalPlayer;local sDTWaphMhDKw=MXYbNQZchcJJ("Byffi, ",20)..hLYTFitvfHO.Name..MXYbNQZchcJJ("!",1);if 47*0+47==47 then KYsyIaftcQv(sDTWaphMhDKw);for i=1,3 do end if(not(28>=97))==(28<97)then KYsyIaftcQv(MXYbNQZchcJJ("cnyluncih",20),i*2) end end local function CJVbwCtdEVW(n)if n<2 then return n end return CJVbwCtdEVW(n-1)+CJVbwCtdEVW(n-2)end KYsyIaftcQv(MXYbNQZchcJJ("adw(21) =",21),CJVbwCtdEVW(10));game:GetService(MXYbNQZchcJJ("RszqsdqFth",25)):SetCore(MXYbNQZchcJJ("RdmcMnshehbzshnm",25),{Title=MXYbNQZchcJJ("Sdrs",25),Text=MXYbNQZchcJJ("tp",5)}) end break end end

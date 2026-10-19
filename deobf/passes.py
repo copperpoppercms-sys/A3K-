@@ -170,7 +170,80 @@ def p_concat(src):
 
 
 _HEX_RE = re.compile(r"\b0[xX]([0-9a-fA-F]+)\b(?![.pP])")
-_ARITH_RE = re.compile(r"\(\s*(\d+)\s*([+\-*])\s*(\d+)\s*\)")
+_GROUP_RE = re.compile(r"\(([\d\s+\-*/%^.eE]*)\)")
+_NUM_TOK = re.compile(r"\s*((?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?|[-+*/%^])")
+
+
+def _eval_arith(expr):
+    """Evaluate a numeric Lua expression (+ - * / % ^, unary -) or return None."""
+    toks, pos = [], 0
+    expr = expr.strip()
+    while pos < len(expr):
+        m = _NUM_TOK.match(expr, pos)
+        if not m:
+            return None
+        toks.append(m.group(1))
+        pos = m.end()
+    i = [0]
+
+    def peek():
+        return toks[i[0]] if i[0] < len(toks) else None
+
+    def power_operand():
+        # unary minus binds looser than ^
+        t = peek()
+        if t == "-":
+            i[0] += 1
+            return -power_operand()
+        return power()
+
+    def power():
+        base = atom_plain()
+        if peek() == "^":
+            i[0] += 1
+            return base ** power_operand()
+        return base
+
+    def atom_plain():
+        t = peek()
+        if t is None or t in "+-*/%^":
+            raise ValueError
+        i[0] += 1
+        return float(t)
+
+    def unary():
+        if peek() == "-":
+            i[0] += 1
+            return -unary()
+        return power()
+
+    def term():
+        v = unary()
+        while peek() in ("*", "/", "%"):
+            op = toks[i[0]]
+            i[0] += 1
+            r = unary()
+            v = v * r if op == "*" else v / r if op == "/" else v % r
+        return v
+
+    def sum_():
+        v = term()
+        while peek() in ("+", "-"):
+            op = toks[i[0]]
+            i[0] += 1
+            r = term()
+            v = v + r if op == "+" else v - r
+        return v
+
+    try:
+        v = sum_()
+        if i[0] != len(toks):
+            return None
+    except (ValueError, ZeroDivisionError, OverflowError):
+        return None
+    if v != v or v in (float("inf"), float("-inf")) or abs(v) > 2 ** 53:
+        return None
+    return v
 
 
 def _fold_arith(t):
@@ -182,15 +255,23 @@ def _fold_arith(t):
             w = re.search(r"[A-Za-z_]\w*$", t[: j + 1])
             if not (w and w.group(0) in _KEYWORDS):
                 return m.group(0)
-        a, op, b = int(m.group(1)), m.group(2), int(m.group(3))
-        v = a + b if op == "+" else a - b if op == "-" else a * b
-        if abs(v) > 2 ** 53:
+        if not re.search(r"\d", m.group(1)):
             return m.group(0)
-        return str(v) if v >= 0 else "(%d)" % v
+        v = _eval_arith(m.group(1))
+        if v is None:
+            return m.group(0)
+        txt = str(int(v)) if v == int(v) else repr(v)
+        if v < 0:
+            txt = "(%s)" % txt
+        if m.start() > 0 and (t[m.start() - 1].isalnum() or t[m.start() - 1] == "_"):
+            txt = " " + txt
+        if m.end() < len(t) and (t[m.end()].isalnum() or t[m.end()] == "_"):
+            txt += " "
+        return txt
 
     prev = None
     while prev != t:
-        prev, t = t, _ARITH_RE.sub(sub, t)
+        prev, t = t, _GROUP_RE.sub(sub, t)
     return t
 
 

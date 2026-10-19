@@ -2,7 +2,7 @@
 from dataclasses import dataclass, field
 
 from . import decrypt, logger, passes, sandbox
-from .detect import BY_NAME, detect
+from .detect import BY_NAME, detect, obfuscation_score
 
 
 @dataclass
@@ -21,6 +21,7 @@ class Result:
     prints: list = field(default_factory=list)
     constants: list = field(default_factory=list)
     recon: str = ""
+    obf_after: int = 0
     error: str = ""
     changed: bool = False
 
@@ -28,7 +29,7 @@ class Result:
     def best(self):
         """Readable output: recovered source, or the behaviour reconstruction for vm payloads that never reach loadstring."""
         vm = BY_NAME.get(self.engine) and BY_NAME[self.engine].vm
-        if self.recon and (not self.changed or (vm and not self.layers)):
+        if self.recon and (not self.changed or (not self.layers and (vm or self.obf_after >= 25))):
             return self.recon
         return self.source
 
@@ -92,6 +93,7 @@ def deobfuscate(src, engine=None, dynamic=True, max_layers=8, seconds=10):
         res.notes.append("vm-based protector: payload never reaches loadstring, see the behaviour trace (.l)")
     res.source = cur
     res.changed = cur != original
+    res.obf_after = obfuscation_score(cur)
     res.findings = logger.scan(cur)
     return res
 

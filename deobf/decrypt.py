@@ -7,7 +7,6 @@ from . import passes, sandbox
 _DEF_RE = re.compile(
     r"local\s+function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)|local\s+([A-Za-z_]\w*)\s*=\s*function\s*\(([^)]*)\)"
 )
-_WRAPPER_RE = re.compile(r"^(\s*(?:--\[\[.*?\]\]\s*)?)return\s*\(\s*function\s*\(\s*\.\.\.\s*\)", re.S)
 _BLOCK_RE = re.compile(r"\b(function|if|do|repeat|end|until)\b")
 _PH = "\x01%d\x01"
 _ARG = r"(?:\x01\d+\x01|-?\d+(?:\.\d+)?)"
@@ -50,52 +49,63 @@ def _lit(tok, strs):
     return ("n", int(v) if v == int(v) else v)
 
 
-def _fold_one(src, skel, strs, name, def_end):
-    call_re = re.compile(r"(?<![\w.:])%s\s*\(\s*(%s(?:\s*,\s*%s)*)\s*\)" % (re.escape(name), _ARG, _ARG))
-    matches = [m for m in call_re.finditer(skel) if m.start() >= 0]
-    if len(matches) < MIN_CALLS:
-        return None
-    tuples = []
-    for m in matches:
-        tuples.append(tuple(_lit(t, strs) for t in re.split(r"\s*,\s*", m.group(1).strip())))
-    uniq = list(dict.fromkeys(tuples))[:MAX_CALLS]
-    prefix = src[:def_end]
-    w = _WRAPPER_RE.match(prefix)
-    if w:
-        prefix = w.group(1) + prefix[w.end():]
-    res = sandbox.decrypt(prefix, name, [list(map(list, t)) for t in uniq])
-    if not res:
-        return None
-    table = dict(zip(uniq, res))
-    hits = sum(1 for v in table.values() if v is not None)
-    if hits * 2 < len(uniq):  # most calls failed: this is not a pure decoder
-        return None
-
-    def sub(m):
-        t = tuple(_lit(x, strs) for x in re.split(r"\s*,\s*", m.group(1).strip()))
-        v = table.get(t)
-        return passes.emit_str(v) if v is not None else m.group(0)
-
-    return call_re.sub(sub, skel), hits
+def _norm(args):
+    return tuple((k, float(v) if k == "n" else v) for k, v in args)
 
 
 def fold(src):
-    """Return (new_source, calls_inlined)."""
-    total = 0
-    for m in list(_DEF_RE.finditer(src)):
+    """Return (new_source, calls_inlined).
+
+    Decoders are instrumented in place and the whole script is executed, so every value is the one the
+    script itself computed (scripts that mutate the constant pool after defining the getter stay correct).
+    Call sites the run never reached are evaluated afterwards against the live decoder closure."""
+    cands = []
+    for m in _DEF_RE.finditer(src):
         name = m.group(1) or m.group(3)
         params = (m.group(2) if m.group(1) else m.group(4)).strip()
         if not params or params.count(",") > 2 or "..." in params:
             continue
-        fstart = src.index("function", m.start())
-        end = block_end(src, fstart)
-        if end is None:
+        end = block_end(src, src.index("function", m.start()))
+        if end is not None:
+            cands.append((name, m.start(), end))
+    if not cands:
+        return src, 0
+    skel, strs = _skeleton(src)
+    sites = {}
+    for name, _, _ in cands:
+        call_re = re.compile(r"(?<![\w:])(?<![^.]\.)%s\s*\(\s*(%s(?:\s*,\s*%s)*)\s*\)" % (re.escape(name), _ARG, _ARG))
+        found = [(m, _norm(tuple(_lit(t, strs) for t in re.split(r"\s*,\s*", m.group(1).strip())))) for m in call_re.finditer(skel)]
+        if len(found) >= MIN_CALLS:
+            sites[name] = (call_re, found)
+    if not sites:
+        return src, 0
+    inst = src
+    for name, _, end in sorted(cands, key=lambda c: -c[2]):
+        if name in sites:
+            inst = inst[:end] + " %s=__REC(%s,%s) " % (name, name, '"%s"' % name) + inst[end:]
+    queries = []
+    for name, (_, found) in sites.items():
+        queries += [(name, t) for t in dict.fromkeys(t for _, t in found)][:MAX_CALLS]
+    ran = sandbox.run(inst, 15, queries)
+    recorded = {}
+    for name, args, result in ran.dec:
+        recorded.setdefault((name, _norm(args)), set()).add(result)
+    total = 0
+    for name, _, _ in cands:
+        if name not in sites:
             continue
-        skel, strs = _skeleton(src)
-        got = _fold_one(src, skel, strs, name, end)
-        if not got:
+        call_re, found = sites[name]
+        table = {k[1]: next(iter(v)) for k, v in recorded.items() if k[0] == name and len(v) == 1}
+        if not table:
             continue
-        new_skel, hits = got
-        src = re.sub(r"\x01(\d+)\x01", lambda x: strs[int(x.group(1))], new_skel)
-        total += hits
-    return src, total
+
+        def sub(m, table=table):
+            t = _norm(tuple(_lit(x, strs) for x in re.split(r"\s*,\s*", m.group(1).strip())))
+            v = table.get(t)
+            return passes.emit_str(v) if v is not None else m.group(0)
+
+        new = call_re.sub(sub, skel)
+        hits = sum(1 for _, t in found if t in table)
+        if hits:
+            skel, total = new, total + hits
+    return re.sub(r"\x01(\d+)\x01", lambda x: strs[int(x.group(1))], skel), total

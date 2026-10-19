@@ -16,11 +16,11 @@ def _e(name, label, vm, *sigs):
 
 
 ENGINES = [
-    _e("wearedevs", "WeAreDevs", False, (r"wearedevs\.net/obfuscator", 90), (r"wearedevs", 50), (r"^\s*(?:--\[\[[^\]]*\]\]\s*)?return\s*\(\s*function\s*\(\s*\.\.\.\s*\)", 25)),
+    _e("wearedevs", "WeAreDevs", False, (r"wearedevs\.net/obfuscator", 90), (r"wearedevs", 50), (r"^\s*--\[\[[^\]]*wearedevs[^\]]*\]\]\s*return\s*\(\s*function\s*\(\s*\.\.\.\s*\)", 40)),
     _e("luraph", "Luraph", True, (r"luraph", 80), (r"lura\.ph", 85), (r"\bLPH[_!]", 70), (r"protected using luraph", 90)),
-    _e("prometheus", "Prometheus", False, (r"prometheus obfuscator", 90), (r"levno[_ ]?710", 90), (r"prometheus", 40)),
+    _e("prometheus", "Prometheus", False, (r"prometheus obfuscator", 90), (r"levno[_ ]?710", 90), (r"prometheus", 40), (r"getfenv and getfenv\(\)\s*or _ENV", 55), (r"unpack or table\[", 30), (r"while\s+\w+\[1\]\s*<\s*\w+\[2\]\s*do", 40)),
     _e("clyde", "Clyde", False, (r"\bclyde\b", 60), (r"clyde\s*(?:obfuscator|v\d)", 80)),
-    _e("hercules", "Hercules", False, (r"hercules\s*(?:obfuscator|v\d|protected)", 90), (r"\bhercules\b", 55)),
+    _e("hercules", "Hercules", False, (r"Lua 5\.3\+ / Luau compatibility polyfills", 70), (r"Tamper Detected! Reason", 40), (r"hercules\s*(?:obfuscator|v\d|protected)", 90), (r"\bhercules\b", 55)),
     _e("moonsec", "MoonSec", True, (r"moonsec", 85), (r"protected using moonsec", 95)),
     _e("moonveil", "Moonveil", True, (r"moonveil", 85)),
     _e("goofyscator", "Goofyscator", False, (r"goofyscator", 90), (r"\bgoofy\b", 40)),
@@ -31,6 +31,7 @@ ENGINES = [
     _e("luast", "Luast", True, (r"\bluast\b", 85)),
 ]
 BY_NAME = {e.name: e for e in ENGINES}
+MIN_REPORT = 30
 
 
 def obfuscation_score(src):
@@ -56,7 +57,7 @@ def detect(src):
         for rx, w in e.sigs:
             if rx.search(src):
                 total += w
-        if total:
+        if total >= MIN_REPORT:
             ranked.append((e.name, min(total, 99)))
     ranked.sort(key=lambda x: -x[1])
     return ranked, obfuscation_score(src)

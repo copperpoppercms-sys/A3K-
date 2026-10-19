@@ -15,10 +15,22 @@ end
 local function q(v)
   local t = type(v)
   if proxies[v] then return proxies[v] end
-  if t == "string" then return (string.format("%q", v):gsub("\\\n", "\\n")) end
+  if t == "string" then return (string.gsub(string.format("%q", v), "\\\n", "\\n")) end
   if t == "function" then return "function() end" end
   if t == "table" then return "{...}" end
   return tostring(v)
+end
+local function qt(v, depth)
+  if type(v) ~= "table" or proxies[v] then return q(v) end
+  if depth <= 0 then return "{...}" end
+  local parts, n = {}, 0
+  for k, x in pairs(v) do
+    n = n + 1
+    if n > 8 then parts[#parts + 1] = "..." break end
+    local key = type(k) == "string" and k:match("^[%a_][%w_]*$") and k or "[" .. q(k) .. "]"
+    parts[#parts + 1] = (type(k) == "number" and "" or key .. " = ") .. qt(x, depth - 1)
+  end
+  return "{" .. table.concat(parts, ", ") .. "}"
 end
 local function note_urls(args)
   for i = 1, args.n do
@@ -35,7 +47,7 @@ local function call_text(name, args)
   local base, meth = name:match("^(.*)%.([^.%(%)]+)$")
   local sep = "."
   if base and args.n > 0 and proxies[args[1]] == base then first = 2; sep = ":" end
-  for i = first, args.n do parts[#parts + 1] = q(args[i]) end
+  for i = first, args.n do parts[#parts + 1] = qt(args[i], 2) end
   local shown = base and (base .. sep .. meth) or name
   return shown .. "(" .. table.concat(parts, ", ") .. ")"
 end
@@ -75,7 +87,7 @@ local function capture_load(s, chunkname)
 end
 
 local function http_request(opts)
-  T("request(" .. q(opts) .. ")")
+  T("request(" .. qt(opts, 2) .. ")")
   if type(opts) == "table" then
     note_urls({n = 1, opts})
     if opts.Body then emit("post", tostring(opts.Url) .. " <- " .. tostring(opts.Body):sub(1, 400)) end
@@ -167,7 +179,7 @@ b32.lrotate = function(a, n) n = n % 32 return b32.bor(b32.lshift(a, n), b32.rsh
 b32.rrotate = function(a, n) return b32.lrotate(a, -n) end
 b32.extract = function(a, f, w) return b32.band(b32.rshift(a, f), 2 ^ (w or 1) - 1) end
 env.bit32, env.bit = b32, b32
-env.debug = {traceback = function() return "" end, getinfo = function() return {short_src = "=?", source = "=?", currentline = 0, what = "Lua"} end, sethook = function() end, gethook = function() end, getlocal = function() end, getupvalue = function() end, getmetatable = getmetatable}
+env.debug = {info = function() return "" end, traceback = function() return "" end, getinfo = function() return {short_src = "=?", source = "=?", currentline = 0, what = "Lua"} end, sethook = function() end, gethook = function() end, getlocal = function() end, getupvalue = function() end, getmetatable = getmetatable}
 env.loadstring = capture_load
 env.load = function(x, name)
   if type(x) == "function" then
@@ -176,6 +188,37 @@ env.load = function(x, name)
     x = table.concat(parts)
   end
   return capture_load(x, name)
+end
+local function enc(v) v = tostring(v) return #v .. ":" .. v end
+local ndec, seen_dec = 0, {}
+local decoders = {}
+env.__REC = function(f, name)
+  decoders[name] = f
+  return function(...)
+    local res = {f(...)}
+    local r = res[1]
+    if type(r) == "string" and ndec < 30000 then
+      local parts = {}
+      for i = 1, select("#", ...) do
+        local a = (select(i, ...))
+        if type(a) == "string" then parts[#parts + 1] = "s" .. enc(a)
+        elseif type(a) == "number" then parts[#parts + 1] = "n" .. enc(string.format("%.17g", a))
+        else parts = nil break end
+      end
+      if parts then
+        local payload = enc(name) .. enc(table.concat(parts)) .. enc(r)
+        if not seen_dec[payload] then seen_dec[payload] = true ndec = ndec + 1 emit("dec", payload) end
+      end
+    end
+    return unpack(res)
+  end
+end
+-- evaluate a recorded decoder (with its real upvalues) for call sites the run never reached
+env.__QUERY = function(name, ...)
+  local f = decoders[name]
+  if not f then return nil end
+  local ok, r = real_pcall(f, ...)
+  if ok and type(r) == "string" then return r end
 end
 env.getfenv = function() return env end
 env.setfenv = function(f, e) if type(f) == "function" then return f end return f end
@@ -227,7 +270,7 @@ return function(source)
   real_setfenv(f, env)
   local ok, e = real_pcall(f)
   if not ok then emit("error", tostring(e)) end
-end, env
+end, env, function(s) DEADLINE = real_clock() + s end
 '''
 
 
@@ -253,23 +296,20 @@ def main():
     clock = lua.eval("os.clock")
     deadline = clock() + job.get("seconds", 10)
     loader = lua.eval("function(code, ...) return assert(loadstring(code))(...) end")
-    runner, env = loader(
+    runner, env, extend = loader(
         BOOT.encode(), emit, g.loadstring, g.pcall, g.setfenv, clock, g.debug.sethook,
         g.coroutine.create, g.coroutine.wrap, None, deadline,
     )
-    if job.get("mode") == "decrypt":
-        # prefix defines the decoder; evaluate it for every literal argument tuple
-        runner(src + b"\n__DECODER__ = " + job["name"].encode() + b"\n")
-        fn = env[b"__DECODER__"]
-        call = lua.eval("function(f, ...) local ok, r = pcall(f, ...) if ok and type(r) == 'string' then return r end return nil end")
-        out = []
-        for args in job["calls"]:
-            largs = [a[1].encode("latin-1") if a[0] == "s" else a[1] for a in args]
-            r = call(fn, *largs) if fn is not None else None
-            out.append(r.decode("latin-1") if r is not None else None)
-        emit("decrypt", json.dumps(out))
-        return
     runner(src)
+    queries = job.get("queries") or []
+    if queries:
+        extend(job.get("query_seconds", 10))
+        query = env[b"__QUERY"]
+        for name, args in queries:
+            largs = [a[1].encode("latin-1") if a[0] == "s" else a[1] for a in args]
+            r = query(name.encode(), *largs)
+            if r is not None:
+                emit("qres", json.dumps([name, args, r.decode("latin-1")]))
     emit("done", "")
 
 
