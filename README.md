@@ -9,6 +9,16 @@ Lua / Luau deobfuscator with a Discord bot front-end (`.deobf`, `.luraph`, `.wea
 3. **sandbox** - the script runs in a separate, resource-limited Lua 5.1 process with no io/network/file access. `loadstring`/`load` chunks are captured (each one is the next layer), every Roblox/executor API is a recording proxy. Layers repeat until nothing new is captured.
 4. **logger scan** - webhook / telegram / cookie / ip-grab / inventory-harvest rules; `Remove logger` rewrites exfil URLs and neutralises POST statements, keeping the script compilable.
 
+## Source recovery for non-vm obfuscation
+
+When a script is not a vm protector, the bot parses it (`deobf/luaast.py`, a full Lua 5.1 parser with scope resolution), simplifies it (`deobf/simplify.py`) and prints readable source:
+
+- constant folding and flow-sensitive constant propagation, opaque predicates and dead branches removed, one-shot `while ... break` loops unrolled
+- junk locals/functions/assignments removed, builtin aliases (`local p = print`) inlined, constant tables indexed away
+- inline string decryptors evaluated in the sandbox, integrity-check blocks removed, random identifiers renamed
+
+The cleaned source is only used after **both versions are run in the sandbox and behave identically** (same calls, prints and errors); otherwise the original is kept and the note says why. The simplifier itself is fuzzed: 9,000 random programs (loops, closures, tables, shadowing, early exits) must print the same before and after, and `tests/test_simplify.py` keeps 300 + 200 of them plus 28 handwritten edge cases. Real example: Hercules *heavy* (12 KB of anti-tamper, control-flow flattening, junk code, encoded strings) comes back as 954 bytes of source.
+
 ## Coverage (read before trusting it)
 
 Validated against **real output** of obfuscators built from their public source (`tests/samples/`):

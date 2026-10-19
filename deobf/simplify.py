@@ -34,7 +34,13 @@ def make_const(v):
     return A.Num(_norm_num(v))
 
 
+def _neg_zero(v):
+    return isinstance(v, float) and v == 0 and math.copysign(1.0, v) < 0
+
+
 def _norm_num(v):
+    if _neg_zero(v):
+        return v  # Lua numbers are doubles: -0 prints as "-0"
     if isinstance(v, float) and v == v and abs(v) < 2 ** 53 and v == int(v):
         return int(v)
     return v
@@ -49,6 +55,8 @@ def _is_num(v):
 
 
 def _num_str(v):
+    if _neg_zero(v):
+        return "-0"
     if isinstance(v, float) and v != int(v):
         return "%.14g" % v
     return A.fmt_num(v)
@@ -69,10 +77,16 @@ def fold_bin(op, a, b):
         try:
             if op == "+":
                 v = a + b
+                if v == 0:
+                    v = float(a) + float(b)
             elif op == "-":
                 v = a - b
+                if v == 0:
+                    v = float(a) - float(b)
             elif op == "*":
                 v = a * b
+                if v == 0:
+                    v = float(a) * float(b)
             elif op == "/":
                 if b == 0:
                     return _MISSING
@@ -101,8 +115,8 @@ def fold_bin(op, a, b):
                 return _MISSING
         except (OverflowError, ValueError, ZeroDivisionError):
             return _MISSING
-        if isinstance(v, complex) or v != v or v in (math.inf, -math.inf) or abs(v) > 2 ** 53:
-            return _MISSING
+        if isinstance(v, complex) or v != v or v in (math.inf, -math.inf) or abs(v) > 2 ** 53 or _neg_zero(v):
+            return _MISSING  # a literal can never produce -0, so leave the expression for the runtime
         return _norm_num(v)
     if isinstance(a, str) and isinstance(b, str):
         if op == "..":
@@ -118,7 +132,7 @@ def fold_un(op, a):
     if op == "not":
         return not truthy(a)
     if op == "-" and _is_num(a):
-        return _norm_num(-a)
+        return _MISSING if a == 0 else _norm_num(-a)
     if op == "#" and isinstance(a, str):
         return len(a)
     return _MISSING
@@ -651,11 +665,13 @@ class Simplifier:
             return []
         if ok and truthy(v):
             # does the first iteration end in `break` once the opaque predicates inside are resolved?
+            saved = dict(self.gconst)
             trial = self.block(clone(s.body), dict(env))
             if trial and type(trial[-1]) is A.Break and not _has_break(trial[:-1]):
                 self.changed = True  # runs exactly once
                 self.drop_env(env, gone)
                 return self.splice(trial[:-1])
+            self.gconst = saved  # facts derived from the first-iteration state do not hold for later iterations
         benv = {k: val for k, val in env.items() if k not in gone}
         s.cond = self.sub(s.cond, benv)
         okc, vc = const_of(s.cond)
@@ -714,10 +730,10 @@ def remove_unused(body):
         out = []
         for s in b:
             t = type(s)
-            if t is A.LocalStmt and all(v.reads == 0 for v in s.vars) and all(pure(e) for e in s.exprs):
+            if t is A.LocalStmt and all(v.reads == 0 and v.writes == 0 for v in s.vars) and all(pure(e) for e in s.exprs):
                 removed += 1
                 continue
-            if t is A.LocalFunc and s.var.reads == 0:
+            if t is A.LocalFunc and s.var.reads == 0 and s.var.writes == 0:
                 removed += 1
                 continue
             if t is A.Assign and len(s.targets) == 1 and len(s.exprs) == 1 and type(s.targets[0]) is A.Name and s.targets[0].local is not None \
@@ -795,8 +811,23 @@ def find_const_tables(body):
             if type(x) is A.Func:
                 block(x.body)
 
+    mutated = set()
+
     def block(b):
         for s in b:
+            if type(s) is A.Assign:
+                for tg in s.targets:
+                    root = tg
+                    while type(root) is A.Index:
+                        root = root.obj
+                    if type(root) is A.Name and root.local is not None and type(tg) is A.Index:
+                        mutated.add(root.local)
+            if type(s) is A.FuncStmt and type(s.target) is A.Index:
+                root = s.target
+                while type(root) is A.Index:
+                    root = root.obj
+                if type(root) is A.Name and root.local is not None:
+                    mutated.add(root.local)
             if type(s) is A.LocalStmt and len(s.vars) == 1 and len(s.exprs) == 1 and type(s.exprs[0]) is A.Table:
                 tbl, ok, pos = {}, True, 0
                 for kind, k, v in s.exprs[0].items:
@@ -823,7 +854,7 @@ def find_const_tables(body):
                 block(s.func.body)
 
     block(body)
-    return {l: t for l, t in cand.items() if idx_reads.get(l, 0) == l.reads}
+    return {l: t for l, t in cand.items() if l not in mutated and idx_reads.get(l, 0) == l.reads}
 
 
 def strip_antitamper(body):

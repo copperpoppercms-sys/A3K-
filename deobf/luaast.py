@@ -566,6 +566,8 @@ _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 def fmt_num(v):
     if isinstance(v, float):
+        if v == 0 and str(v).startswith("-"):
+            return "-0"
         if v == int(v) and abs(v) < 2 ** 53:
             return str(int(v))
         return repr(v)
