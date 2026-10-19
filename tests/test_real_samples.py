@@ -65,4 +65,4 @@ def test_best_is_script_only_for_vm_output():
 def test_header_is_first_line_and_utf8_safe():
     r = deobfuscate(load("herc_web_162_congrats.lua"))
     first = r.best.encode("latin-1").decode("utf-8").splitlines()[0]
-    assert first == "-- Deobfused By Rift \U0001F595 (Get better \U0001F62D\U0001FAF5)"
+    assert first == "-- Deobfuscated By Rift \U0001F602\U0001FAF5"
