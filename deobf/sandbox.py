@@ -6,8 +6,9 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 
+from .budget import remaining
+
 _WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_worker.py")
-_MEM_BYTES = 768 * 1024 * 1024
 
 
 @dataclass
@@ -22,28 +23,24 @@ class Run:
     constants: list = field(default_factory=list)  # decoded strings built via char/concat/gsub/format
     error: str = ""
     timed_out: bool = False
-
-
-def _limits():
-    try:
-        import resource
-
-        resource.setrlimit(resource.RLIMIT_AS, (_MEM_BYTES, _MEM_BYTES))
-        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-    except Exception:
-        pass
+    completed: bool = False
 
 
 def _spawn(job, timeout):
-    kw = {"preexec_fn": _limits} if os.name == "posix" else {}
     try:
         p = subprocess.run(
             [sys.executable, "-I", _WORKER], input=json.dumps(job).encode(), capture_output=True,
-            timeout=timeout, env={"PATH": os.environ.get("PATH", "")}, **kw,
+            timeout=timeout, env={"PATH": os.environ.get("PATH", "")},
         )
-        return p.stdout, False
+        out = p.stdout
+        if p.returncode:
+            reason = "signal %d (possibly memory limit)" % -p.returncode if p.returncode < 0 else "exit code %d" % p.returncode
+            out += (json.dumps({"k": "error", "v": "sandbox worker stopped: " + reason}) + "\n").encode()
+        return out, False
     except subprocess.TimeoutExpired as e:
         return e.stdout or b"", True
+    except OSError as e:
+        return (json.dumps({"k": "error", "v": "sandbox worker could not start: " + type(e).__name__}) + "\n").encode(), False
 
 
 def _lines(raw):
@@ -77,8 +74,16 @@ def _parse_dec(payload):
 
 def run(source, seconds=10, queries=None, http=None):
     """queries: [(decoder_name, [("s"|"n", value), ...])] evaluated against instrumented decoders after the script ends."""
-    job = {"source": source, "seconds": seconds, "queries": [[n, [list(a) for a in args]] for n, args in queries or []], "http": http or {}}
-    out, timed_out = _spawn(job, seconds + 18)
+    seconds = remaining(seconds)
+    if seconds <= 0:
+        return Run(error="analysis time budget exhausted", timed_out=True)
+    try:
+        memory_mb = max(64, min(2048, int(os.environ.get("SANDBOX_MEMORY_MB", "768"))))
+    except ValueError:
+        memory_mb = 768
+    job = {"source": source, "seconds": seconds, "query_seconds": min(10, seconds), "memory_mb": memory_mb,
+           "queries": [[n, [list(a) for a in args]] for n, args in queries or []], "http": http or {}}
+    out, timed_out = _spawn(job, remaining(seconds + (min(10, seconds) if queries else 0) + 3))
     r = Run(timed_out=timed_out)
     for ev in _lines(out):
         k, v = ev.get("k"), ev.get("v", "")
@@ -106,6 +111,12 @@ def run(source, seconds=10, queries=None, http=None):
             r.prints.append(v)
         elif k == "error":
             r.error = v
+        elif k == "done":
+            r.completed = True
+    if timed_out:
+        r.error = r.error or "sandbox: wall-clock limit"
+    elif not r.completed and not r.error:
+        r.error = "sandbox worker exited without a completion event"
     r.constants = _clean_constants(r.constants)
     return r
 

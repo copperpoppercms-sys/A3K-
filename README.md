@@ -15,6 +15,19 @@ script whose identifying markers have been removed. Match scores are heuristic, 
 3. **sandbox** - the script runs in a separate, resource-limited Lua 5.1 process with no io/network/file access. `loadstring`/`load` chunks are captured (each one is the next layer), every Roblox/executor API is a recording proxy. Layers repeat until nothing new is captured.
 4. **logger scan** - webhook / telegram / cookie / ip-grab / inventory-harvest rules; `Remove logger` rewrites exfil URLs and neutralises POST statements, keeping the script compilable.
 
+Literal loaders can also use long-bracket strings, a literal chunk name, `assert`,
+and nested `string.reverse`, `string.sub`, `string.char`, `string.lower/upper`,
+`string.rep`, or `table.concat` expressions. These are evaluated from a restricted
+syntax tree without executing input code, including in `--static` / `.static` mode.
+Static table folding checks every use and declines tables that are mutated,
+aliased, passed to a function, or shadowed. Malformed escapes stay intact for diagnosis.
+
+Each result records layer history, an output kind, elapsed time, and a stop reason.
+Repeated layers, excessive decoded sizes, and exhausted budgets return partial
+results with an explanation. Logger findings from outer layers are retained.
+Behavior traces retain their label and any runtime/timeout comments, including
+when the VM payload was inside another loader.
+
 ## Source recovery for non-vm obfuscation
 
 When a script is not a vm protector, the bot parses it (`deobf/luaast.py`, a full Lua 5.1 parser with scope resolution), simplifies it (`deobf/simplify.py`) and prints readable source:
@@ -51,12 +64,33 @@ python -m deobf script.lua                 # auto-detect + deobfuscate
 python -m deobf script.lua -e luraph       # force engine
 python -m deobf script.lua --detect
 python -m deobf script.lua --trace         # observable behaviour
-pytest
+python -m deobf script.lua --static        # literal recovery without running input
+python -m deobf script.lua --json -o report.json
+python -m deobf script.lua --detect --json
+python -m deobf script.lua --max-layers 16 --seconds 5 --timeout 30
+python -m pytest
 ```
 
 ## Discord bot
 
 1. Create an app at https://discord.com/developers, enable **Message Content Intent**, copy the bot token, invite with `bot` scope + send messages / attach files.
-2. `DISCORD_TOKEN=... python -m bot.bot` (optional: `BOT_PREFIX=.`, `MAX_JOBS=4`).
+2. `DISCORD_TOKEN=... python -m bot.bot` (optional: `BOT_PREFIX=.`).
 
-Commands: `.deobf` `.<engine>` `.detect` `.l` `.get <url>` `.envlog` `.engines` `.help`. Input = up to 10 attachments, a code block, a url, or a reply to a sample. `.get` only fetches public addresses (redirects re-checked) up to 2 MB.
+Commands: `.deobf` `.<engine>` `.static` `.report` `.status` `.detect` `.l`
+`.get <url>` `.envlog` `.engines` `.help`. Input = up to 10 attachments, a code block,
+a url, or a reply to a sample. `.get` only fetches public addresses (redirects re-checked)
+up to 2 MB. A failed file does not discard successful results from the same batch.
+
+Analysis jobs run in disposable subprocesses, with a bounded queue, a wall-clock
+deadline, and a Linux memory ceiling. Cancelling or timing out a job kills its
+process group, including Lua workers. Worker environments exclude the Discord token.
+Defaults: `MAX_JOBS=1`, `MAX_QUEUE=8`, `JOB_TIMEOUT=75`, `JOB_MEMORY_MB=512`.
+The analysis process and its descendants inherit that per-process memory ceiling;
+`SANDBOX_MEMORY_MB` can lower it for Lua workers. These are per-process limits,
+not a cap on the total memory of your hosting service. Start with one concurrent
+job on Railway; raising concurrency can increase both RAM usage and billing.
+Reports/attachments larger than 7 MB are sent as gzip files.
+
+Missing/invalid bot tokens and disabled Message Content Intent get explicit startup
+messages. A Discord bot does not need an HTTP health-check path. See
+[Railway operation](docs/RAILWAY.md) for deployment and troubleshooting.

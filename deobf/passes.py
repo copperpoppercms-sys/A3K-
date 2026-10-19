@@ -61,6 +61,8 @@ _SIMPLE_ESC = {"a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t",
 
 
 def parse_quoted(lit):
+    if len(lit) < 2 or lit[0] not in "\"'" or lit[-1] != lit[0]:
+        raise ValueError("unfinished quoted string")
     body, out, i, n = lit[1:-1] if len(lit) >= 2 else "", [], 0, 0
     n = len(body)
     while i < n:
@@ -78,7 +80,10 @@ def parse_quoted(lit):
             i += 4
         elif e.isdigit():
             m = re.match(r"\d{1,3}", body[i + 1:])
-            out.append(chr(int(m.group(0)) & 255))
+            value = int(m.group(0))
+            if value > 255:
+                raise ValueError("decimal escape exceeds 255")
+            out.append(chr(value))
             i += 1 + len(m.group(0))
         elif e == "z":
             i += 2
@@ -86,8 +91,12 @@ def parse_quoted(lit):
                 i += 1
         elif e == "u" and body[i + 2:i + 3] == "{":
             j = body.find("}", i)
+            if j < 0 or not re.fullmatch(r"[0-9a-fA-F]{1,6}", body[i + 3:j]):
+                raise ValueError("invalid unicode escape")
             cp = int(body[i + 3:j], 16)
-            out.append(chr(cp).encode("utf-8", "surrogatepass").decode("latin-1"))
+            if cp > 0x10FFFF or 0xD800 <= cp <= 0xDFFF:
+                raise ValueError("invalid unicode code point")
+            out.append(chr(cp).encode("utf-8").decode("latin-1"))
             i = j + 1
         else:
             out.append(e)
@@ -127,7 +136,10 @@ def p_escapes(src):
     out = []
     for k, t in toks:
         if k == "str" and is_quoted(t) and "\\" in t:
-            t = emit_str(parse_quoted(t))
+            try:
+                t = emit_str(parse_quoted(t))
+            except ValueError:
+                pass  # Preserve malformed input; report its syntax error later.
         out.append((k, t))
     return _join(out)
 
@@ -147,7 +159,44 @@ def _char_sub(m):
 
 
 def p_char(src):
-    return _map_other(src, lambda t: _CHAR_RE.sub(_char_sub, t))
+    if not _CHAR_RE.search(src):
+        return src
+    from . import luaast as a
+    if len(src) > 400_000:
+        return src
+    try:
+        def safe(node, parent=None, field=None, target=False):
+            if isinstance(node, a.Local):
+                return node.name != "string"
+            if isinstance(node, a.Name) and node.name == "string":
+                return not target and node.local is None and isinstance(parent, a.Index) and field == "obj"
+            if isinstance(node, a.Node):
+                return all(safe(getattr(node, key), node, key, target or isinstance(node, (a.Assign, a.FuncStmt)) and key in ("targets", "target")) for key in node.__slots__)
+            if isinstance(node, (list, tuple)):
+                return all(safe(child, parent, field, target) for child in node)
+            return True
+
+        if not safe(a.parse(src)):
+            return src
+    except (a.ParseError, ValueError, OverflowError, RecursionError):
+        return src
+
+    def fold(text, prefix):
+        def sub(match):
+            before = (prefix + text[:match.start()]).rstrip()
+            if before.endswith(".") and not before.endswith("..") or before.endswith(":") and not before.endswith("::"):
+                return match.group(0)
+            return _char_sub(match)
+        return _CHAR_RE.sub(sub, text)
+
+    out, prefix = [], ""
+    for kind, text in lua_split(src):
+        out.append(fold(text, prefix) if kind == "other" else text)
+        if kind == "other":
+            prefix = (prefix + text)[-256:]
+        elif kind == "str":
+            prefix = "literal"
+    return "".join(out)
 
 
 def p_concat(src):
@@ -178,6 +227,8 @@ def _eval_arith(expr):
     """Evaluate a numeric Lua expression (+ - * / % ^, unary -) or return None."""
     toks, pos = [], 0
     expr = expr.strip()
+    if len(expr) > 4096:
+        return None
     while pos < len(expr):
         m = _NUM_TOK.match(expr, pos)
         if not m:
@@ -239,9 +290,9 @@ def _eval_arith(expr):
         v = sum_()
         if i[0] != len(toks):
             return None
-    except (ValueError, ZeroDivisionError, OverflowError):
+    except (ValueError, ZeroDivisionError, OverflowError, TypeError, RecursionError):
         return None
-    if v != v or v in (float("inf"), float("-inf")) or abs(v) > 2 ** 53:
+    if isinstance(v, complex) or v != v or v in (float("inf"), float("-inf")) or abs(v) > 2 ** 53:
         return None
     return v
 
@@ -276,7 +327,7 @@ def _fold_arith(t):
 
 
 def p_numbers(src):
-    return _map_other(src, lambda t: _fold_arith(_HEX_RE.sub(lambda m: str(int(m.group(1), 16)), t)))
+    return _map_other(src, lambda t: _fold_arith(_HEX_RE.sub(lambda m: str(int(m.group(1), 16)) if len(m.group(1)) <= 64 else m.group(0), t)))
 
 
 def _scan_quoted_end(src, i):
@@ -312,6 +363,38 @@ def p_strtable(src):
             tables[name] = items
     if not tables:
         return src
+    # A table may escape through an alias/call, be shadowed, or be written through
+    # a computed index. Prove that every use is a literal index read before folding.
+    from . import luaast as a
+    if len(src) > 400_000:
+        return src
+    try:
+        body = a.parse(src)
+        bindings = {name: set() for name in tables}
+        invalid = set()
+
+        def walk(node, parent=None, field=None, target=False):
+            if isinstance(node, a.Local):
+                if node.name in bindings:
+                    bindings[node.name].add(node)
+            elif isinstance(node, a.Name):
+                if node.name in tables:
+                    bindings[node.name].add(node.local)
+                    if target or not isinstance(parent, a.Index) or field != "obj" or not isinstance(parent.key, a.Num) or parent.key.value != int(parent.key.value):
+                        invalid.add(node.name)
+            elif isinstance(node, a.Node):
+                for key in node.__slots__:
+                    walk(getattr(node, key), node, key, target or isinstance(node, a.Assign) and key == "targets")
+            elif isinstance(node, (list, tuple)):
+                for child in node:
+                    walk(child, parent, field, target)
+
+        walk(body)
+        tables = {name: items for name, items in tables.items() if name not in invalid and len(bindings[name]) == 1 and None not in bindings[name]}
+    except (a.ParseError, ValueError, OverflowError, RecursionError):
+        return src
+    if not tables:
+        return src
     pat = re.compile(r"\b(%s)\s*\[\s*(\d+)\s*\]" % "|".join(map(re.escape, tables)))
 
     def sub(m):
@@ -325,8 +408,16 @@ _WRAP_RE = re.compile(r"^\s*(?:return\s*)?\(?\s*(?:loadstring|load)\s*\(\s*(\"(?
 
 
 def unwrap_static(src):
+    from .literals import unwrap
+
     m = _WRAP_RE.match(src)
-    return parse_quoted(m.group(1)) if m else None
+    if m:
+        try:
+            value = parse_quoted(m.group(1))
+            return value if not value.startswith("\x1b") else None
+        except ValueError:
+            return None
+    return unwrap(src)
 
 
 PASSES = [("escapes", p_escapes), ("numbers", p_numbers), ("string.char", p_char), ("concat", p_concat), ("string-table", p_strtable)]
@@ -337,7 +428,10 @@ def run_static(src, max_rounds=10):
     for _ in range(max_rounds):
         before = src
         for name, fn in PASSES:
-            new = fn(src)
+            try:
+                new = fn(src)
+            except (ValueError, OverflowError, RecursionError):
+                continue
             if new != src:
                 notes.append(name)
                 src = new

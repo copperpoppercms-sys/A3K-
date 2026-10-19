@@ -107,7 +107,11 @@ def lex(src):
                 j += 2 if src[j] == "\\" else 1
             if j >= n:
                 raise ParseError("unfinished string")
-            toks.append(("str", passes.parse_quoted(src[i:j + 1]), i))
+            try:
+                value = passes.parse_quoted(src[i:j + 1])
+            except ValueError as e:
+                raise ParseError(str(e)) from e
+            toks.append(("str", value, i))
             i = j + 1
             continue
         if c == "[":

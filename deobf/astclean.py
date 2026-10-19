@@ -56,6 +56,8 @@ def clean(src, verify=True, seconds=10):
     if verify:
         a = sandbox.run(patches.apply(src)[0], seconds)
         b = sandbox.run(patches.apply(out)[0], seconds)
+        if a.timed_out or b.timed_out or not a.completed or not b.completed:
+            return None, "verification incomplete (worker/time limit), kept original"
         if _norm(a) != _norm(b):
             return None, "behaviour changed by simplification, kept original"
     return out, stats

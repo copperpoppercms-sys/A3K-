@@ -1,11 +1,14 @@
 """Pipeline: static passes -> static loadstring unwrap -> sandboxed execution (layer capture) -> repeat."""
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from time import monotonic
 
 from . import astclean, decrypt, logger, passes, patches, recon, sandbox
 from . import fetch as fetchmod
+from .budget import remaining, time_budget
 
 MAX_FETCH = 8
 MAX_CLEAN_BYTES = 400_000
+MAX_SOURCE_BYTES = 2 * 1024 * 1024
 
 HEADER = "-- Deobfuscated by A3K Deobfuscator"
 
@@ -34,18 +37,21 @@ class Result:
     obf_after: int = 0
     error: str = ""
     changed: bool = False
+    payload_engine: str = "unknown"
+    layer_history: list = field(default_factory=list)
+    elapsed_seconds: float = 0
+    stop_reason: str = "complete"
 
     @property
     def shows_recon(self):
-        vm = BY_NAME.get(self.engine) and BY_NAME[self.engine].vm
-        return bool(self.recon and not self.layers and (vm or self.obf_after >= 25))
+        vm = BY_NAME.get(self.payload_engine) and BY_NAME[self.payload_engine].vm
+        return bool(self.recon and (vm or self.obf_after >= 25))
 
     @property
     def body(self):
         """The deliverable without the header line."""
         if self.shows_recon:
-            code = [ln for ln in self.recon.splitlines() if not ln.startswith("--")]
-            return "\n".join(code) if code else self.recon
+            return self.recon
         return self.source
 
     @property
@@ -56,6 +62,19 @@ class Result:
     @property
     def is_logger(self):
         return logger.is_logger(self.findings)
+
+    @property
+    def output_kind(self):
+        if self.shows_recon:
+            return "behavior-trace"
+        if self.layers:
+            return "unwrapped-source"
+        return "cleaned-source" if self.changed else "unchanged-source"
+
+    def to_report(self):
+        report = asdict(self)
+        report.update(output_kind=self.output_kind, score_kind="heuristic evidence, not probability")
+        return report
 
 
 def _resolve_engine(src, forced):
@@ -68,17 +87,56 @@ def _resolve_engine(src, forced):
     return "unknown", 0, ranked, score
 
 
-def deobfuscate(src, engine=None, dynamic=True, max_layers=8, seconds=10, fetch=False):
+def deobfuscate(src, engine=None, dynamic=True, max_layers=8, seconds=10, fetch=False, timeout=60):
+    if len(src) > MAX_SOURCE_BYTES:
+        raise ValueError("script exceeds 2 MB input limit")
+    if not 1 <= max_layers <= 32 or not 0 < seconds <= 30 or not 0 < timeout <= 300:
+        raise ValueError("limits: max_layers 1-32, seconds >0 to 30, timeout >0 to 300")
+    started = monotonic()
+    with time_budget(timeout):
+        result = _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch)
+    result.elapsed_seconds = round(monotonic() - started, 3)
+    return result
+
+
+def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
     """fetch=True lets scripts that `loadstring(game:HttpGet(url))()` pull their next stage: the url is downloaded
     by this process (public addresses only, see fetch.py) and handed to the sandbox as the HttpGet result."""
     if engine and engine not in BY_NAME:
         raise ValueError("unknown engine %r" % engine)
-    original = cur = src
+    original = src
+    cur = src[3:] if src.startswith("\xef\xbb\xbf") else src
     eng, conf, ranked, score = _resolve_engine(cur, engine)
     res = Result(source=cur, engine=eng, confidence=conf, candidates=ranked, obf_score=score)
     ran = None
     http = {}
+    seen = {cur}
+    findings = logger.scan(cur)
+
+    def advance(inner, method):
+        if len(inner) > MAX_SOURCE_BYTES:
+            res.stop_reason = "decoded-size-limit"
+            res.notes.append("decoded layer exceeds 2 MB; kept previous layer")
+            return False
+        if inner in seen:
+            res.stop_reason = "layer-cycle"
+            res.notes.append("repeated layer detected; stopped decoding")
+            return False
+        seen.add(inner)
+        candidates, score = detect(cur)
+        res.layer_history.append({"index": res.layers + 1, "method": method,
+                                  "engine": candidates[0][0] if candidates else "unknown",
+                                  "candidates": candidates, "score": score,
+                                  "input_bytes": len(cur), "output_bytes": len(inner)})
+        res.layers += 1
+        findings.extend(logger.scan(inner))
+        return True
+
     for layer in range(max_layers):
+        if remaining() <= 0:
+            res.stop_reason = "time-budget"
+            res.notes.append("analysis time budget exhausted; returning partial result")
+            break
         cur, notes = passes.run_static(cur)
         res.notes += ["static:" + n for n in notes]
         if dynamic:
@@ -90,7 +148,9 @@ def deobfuscate(src, engine=None, dynamic=True, max_layers=8, seconds=10, fetch=
                 res.notes.append("decoder: inlined %d call(s)" % n)
         inner = passes.unwrap_static(cur)
         if inner is not None:
-            cur, res.layers = inner, res.layers + 1
+            if not advance(inner, "literal-loader"):
+                break
+            cur, ran = inner, None
             res.notes.append("unwrapped literal loadstring")
             continue
         if not dynamic:
@@ -101,38 +161,54 @@ def deobfuscate(src, engine=None, dynamic=True, max_layers=8, seconds=10, fetch=
             if note not in res.notes:
                 res.notes.append(note)
         ran = sandbox.run(exec_src, seconds, http=http)
-        while fetch and len(http) < MAX_FETCH:
+        findings.extend(logger.scan_runtime("\n".join(ran.urls + ran.posts + ran.constants)))
+        while fetch and len(http) < MAX_FETCH and remaining() > 0:
             new = [u for u in ran.gets if u not in http][: MAX_FETCH - len(http)]
             if not new:
                 break
             for u in new:
+                if remaining() <= 0:
+                    break
                 try:
-                    http[u] = fetchmod.fetch(u)
+                    http[u] = fetchmod.fetch(u, timeout=remaining(15))
                     res.notes.append("fetched " + u)
                 except fetchmod.FetchError as e:
                     http[u] = ""
                     res.notes.append("fetch failed %s: %s" % (u, e))
             ran = sandbox.run(exec_src, seconds, http=http)
+            findings.extend(logger.scan_runtime("\n".join(ran.urls + ran.posts + ran.constants)))
         if ran.captures and ran.captures[-1] != cur:
-            cur, res.layers = ran.captures[-1], res.layers + 1
+            inner = ran.captures[-1]
+            if not advance(inner, "sandbox-capture"):
+                break
+            if len(set(ran.captures)) > 1:
+                res.notes.append("multiple runtime chunks captured; following the last chunk")
+            cur, ran = inner, None
             res.notes.append("captured loadstring layer %d" % res.layers)
             continue
         break
+    else:
+        res.stop_reason = "layer-limit"
+        res.notes.append("maximum layer count reached; remaining payload kept")
     if ran is not None:
         res.urls, res.posts, res.trace, res.prints, res.constants = ran.urls, ran.posts, ran.trace, ran.prints, ran.constants
         res.recon = reconstruct(ran)
         res.error = ran.error
         if ran.timed_out:
             res.notes.append("sandbox hit wall-clock limit")
+            res.stop_reason = "time-budget" if remaining() <= 0 else "sandbox-time-limit"
+        elif ran.error:
+            res.stop_reason = "runtime-error"
     if res.layers and not engine:
         # re-detect on the innermost payload only when the outer wrapper told us nothing
         e2, c2, r2, s2 = _resolve_engine(cur, None)
         if not conf and c2:
             res.engine, res.confidence, res.candidates = e2, c2, r2
-    if BY_NAME.get(res.engine) and BY_NAME[res.engine].vm and not res.layers:
+    res.payload_engine = _resolve_engine(cur, None)[0]
+    if BY_NAME.get(res.payload_engine) and BY_NAME[res.payload_engine].vm:
         res.notes.append("vm-based protector: payload never reaches loadstring, see the behaviour trace (.l)")
-    if dynamic:
-        vm_engine = BY_NAME.get(res.engine) and BY_NAME[res.engine].vm
+    if dynamic and remaining() > 0:
+        vm_engine = BY_NAME.get(res.payload_engine) and BY_NAME[res.payload_engine].vm
         if not vm_engine and len(cur) < MAX_CLEAN_BYTES:
             cleaned, info = astclean.clean(cur, seconds=seconds)
             if cleaned is None:
@@ -148,7 +224,7 @@ def deobfuscate(src, engine=None, dynamic=True, max_layers=8, seconds=10, fetch=
     res.findings = logger.scan(cur)
     blob = "\n".join([res.recon] + ["-- url: " + u for u in res.urls] + res.constants + res.posts)
     merged = {}
-    for f in res.findings + logger.scan_runtime(blob):
+    for f in findings + res.findings + logger.scan_runtime(blob):
         merged.setdefault((f.id, f.snippet), f)
     res.findings = list(merged.values())
     return res
@@ -178,6 +254,8 @@ def reconstruct(r):
 
 def trace_behavior(src, seconds=10):
     """Run in the recording sandbox; returns (reconstruction, Run)."""
+    if len(src) > MAX_SOURCE_BYTES:
+        raise ValueError("script exceeds 2 MB input limit")
     src, _ = passes.run_static(src)
     r = sandbox.run(src, seconds)
     return reconstruct(r) or "-- nothing observable happened", r

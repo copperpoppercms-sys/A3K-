@@ -2,7 +2,7 @@
 import re
 from dataclasses import dataclass, field
 
-from .catalog import EXTRA_ENGINES
+from .catalog import EXTRA_ENGINES, _brand
 
 
 @dataclass
@@ -19,20 +19,20 @@ def _e(name, label, vm, *sigs):
 
 
 ENGINES = [
-    _e("wearedevs", "WeAreDevs", False, (r"wearedevs\.net/obfuscator", 90, "header wearedevs.net/obfuscator"), (r"wearedevs", 50), (r"^\s*--\[\[[^\]]*wearedevs[^\]]*\]\]\s*return\s*\(\s*function\s*\(\s*\.\.\.\s*\)", 40)),
-    _e("luraph", "Luraph", True, (r"luraph", 80), (r"lura\.ph", 85, "header lura.ph"), (r"\bLPH[_!]", 70), (r"protected using luraph", 90)),
-    _e("prometheus", "Prometheus", False, (r"prometheus obfuscator", 90), (r"levno[_ ]?710", 90), (r"prometheus", 40), (r"getfenv and getfenv\(\)\s*or _ENV", 55, "getfenv and getfenv() or _ENV prologue"), (r"unpack or table\[", 30, "unpack or table[...] lookup"), (r"while\s+\w+\[1\]\s*<\s*\w+\[2\]\s*do", 40, "constant array rotation loop")),
-    _e("clyde", "Clyde", False, (r"\bclyde\b", 60), (r"clyde\s*(?:obfuscator|v\d)", 80)),
-    _e("hercules", "Hercules", False, (r"Lua 5\.3\+ / Luau compatibility polyfills", 70, "polyfill header comment"), (r"Tamper Detected! Reason", 40, "Tamper Detected message"), (r"hercules\s*(?:obfuscator|v\d|protected)", 90), (r"\bhercules\b", 55)),
-    _e("moonsec", "MoonSec", True, (r"moonsec", 85), (r"protected using moonsec", 95)),
-    _e("moonveil", "Moonveil", True, (r"moonveil", 85)),
-    _e("goofyscator", "Goofyscator", False, (r"goofyscator", 90), (r"\bgoofy\b", 40)),
-    _e("ironbrew", "IronBrew", True, (r"ironbrew", 85), (r"[\"']LOL!", 55), (r"\bStk\b.*\bInst\b", 35), (r"\bUpvalues\b.*\bVararg\b", 25), (r"\bStk\b", 20)),
-    _e("mwp", "MWP", True, (r"\bmwp\b", 70), (r"mwp\s*obfuscator", 90)),
-    _e("ironveil", "IronVeil", True, (r"ironveil", 90)),
-    _e("luaobfuscator", "Luaobfuscator.com", False, (r"luaobfuscator\.com", 90), (r"luaobfuscator", 60)),
+    _e("wearedevs", "WeAreDevs", False, _brand("wearedevs"), (r"wearedevs\.net/obfuscator", 90, "header wearedevs.net/obfuscator")),
+    _e("luraph", "Luraph", True, _brand("luraph"), (r"lura\.ph", 85, "header lura.ph"), (r"\bLPH[_!]", 70, "Luraph runtime macro")),
+    _e("prometheus", "Prometheus", False, _brand("prometheus"), (r"levno[_ ]?710", 90, "Prometheus author watermark"), (r"getfenv and getfenv\(\)\s*or _ENV", 55, "getfenv and getfenv() or _ENV prologue"), (r"unpack or table\[", 30, "unpack or table[...] lookup"), (r"while\s+\w+\[1\]\s*<\s*\w+\[2\]\s*do", 40, "constant array rotation loop")),
+    _e("clyde", "Clyde", False, _brand("clyde")),
+    _e("hercules", "Hercules", False, _brand("hercules"), (r"Lua 5\.3\+ / Luau compatibility polyfills", 70, "polyfill header comment"), (r"Tamper Detected! Reason", 40, "Tamper Detected message")),
+    _e("moonsec", "MoonSec", True, _brand("moonsec")),
+    _e("moonveil", "Moonveil", True, _brand("moonveil")),
+    _e("goofyscator", "Goofyscator", False, _brand("goofyscator")),
+    _e("ironbrew", "IronBrew", True, _brand("ironbrew"), (r"\bironbrew(?:2|:tm:)?\s*[:;]?\s*obfuscation", 85, "IronBrew watermark"), (r"[\"']LOL!", 55, "IronBrew packed bytecode prefix"), (r"\bStk\b.*\bInst\b", 35), (r"\bUpvalues\b.*\bVararg\b", 25), (r"\bStk\b", 20)),
+    _e("mwp", "MWP", True, _brand("mwp")),
+    _e("ironveil", "IronVeil", True, _brand("ironveil")),
+    _e("luaobfuscator", "Luaobfuscator.com", False, _brand("luaobfuscator"), (r"luaobfuscator\.com", 90, "Luaobfuscator service domain")),
     _e("rerubi", "Rerubi VM loader", True, (r"OpArgR", 60, "OpArgR opcode table"), (r"OpArgK.{0,80}OpArgN", 30)),
-    _e("luast", "Luast", True, (r"\bluast\b", 85)),
+    _e("luast", "Luast", True, _brand("luast")),
 ]
 ENGINES.extend(_e(name, label, vm, *sigs) for name, label, vm, sigs in EXTRA_ENGINES)
 BY_NAME = {e.name: e for e in ENGINES}
@@ -54,18 +54,27 @@ def obfuscation_score(src):
     return min(s, 100)
 
 
-def detect(src):
-    """Return (ranked [(name, confidence)], obfuscation_score)."""
+def _matches(src):
     ranked = []
     for e in ENGINES:
-        total = 0
-        for rx, w, _why in e.sigs:
+        total, why = 0, []
+        for rx, w, reason in e.sigs:
             if rx.search(src):
                 total += w
+                why.append(reason)
         if total >= MIN_REPORT:
-            ranked.append((e.name, min(total, 99)))
+            ranked.append((e.name, min(total, 99), why))
     ranked.sort(key=lambda x: -x[1])
-    return ranked, obfuscation_score(src)
+    # Some AzureVM modes deliberately carry Luraph-looking headers. A runtime
+    # namespace provides stronger attribution than that compatibility watermark.
+    if re.search(r"\bAVM_OBFUSCATED\b", src):
+        ranked.sort(key=lambda x: x[0] != "azurevm")
+    return ranked
+
+
+def detect(src):
+    """Return ranked evidence scores (not probabilities), plus obfuscation score."""
+    return [(n, c) for n, c, _ in _matches(src)], obfuscation_score(src)
 
 
 # techniques seen in the script, independent of which obfuscator produced them
@@ -96,16 +105,9 @@ def techniques(src):
 
 def analyze(src):
     """Full report: engines with the reasons that matched, techniques, obfuscation score."""
-    engines = []
-    for e in ENGINES:
-        total, why = 0, []
-        for rx, w, reason in e.sigs:
-            if rx.search(src):
-                total += w
-                why.append(reason)
-        if total >= MIN_REPORT:
-            engines.append((e.name, min(total, 99), why))
-    engines.sort(key=lambda x: -x[1])
+    engines = _matches(src)
     tags = techniques(src)
     vm = bool(engines and BY_NAME[engines[0][0]].vm) or any(n in ("vm", "vm-dispatch") for n, _ in tags)
-    return {"engines": engines, "techniques": tags, "score": obfuscation_score(src), "vm": vm}
+    ambiguous = bool(len(engines) > 1 and engines[0][1] - engines[1][1] < 10)
+    return {"engines": engines, "techniques": tags, "score": obfuscation_score(src), "vm": vm,
+            "ambiguous": ambiguous, "score_kind": "heuristic evidence, not probability"}

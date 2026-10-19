@@ -485,13 +485,28 @@ end, env, function(s) DEADLINE = real_clock() + s end
 
 def main():
     job = json.loads(sys.stdin.read())
+    # Apply limits inside the fresh worker, avoiding preexec_fn in a threaded bot.
+    try:
+        import resource
+        memory = max(64, min(2048, int(job.get("memory_mb", 768)))) * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (memory, memory))
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    except (ImportError, OSError, ValueError):
+        pass
     from lupa.lua51 import LuaRuntime
 
+    output_bytes = 0
+
     def emit(kind, payload):
+        nonlocal output_bytes
         kind = kind.decode("latin-1") if isinstance(kind, bytes) else kind
         if isinstance(payload, bytes):
             payload = payload.decode("latin-1")
-        sys.stdout.write(json.dumps({"k": kind, "v": payload}) + "\n")
+        line = json.dumps({"k": kind, "v": payload}) + "\n"
+        output_bytes += len(line)
+        if output_bytes > 8 * 1024 * 1024:
+            raise RuntimeError("sandbox output limit exceeded")
+        sys.stdout.write(line)
         sys.stdout.flush()
 
     src = job["source"].encode("latin-1")
