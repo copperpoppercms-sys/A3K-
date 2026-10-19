@@ -1,6 +1,7 @@
 """Parent side of the sandbox: spawns _worker.py in an isolated, resource-limited subprocess."""
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -109,6 +110,10 @@ def run(source, seconds=10, queries=None, http=None):
     return r
 
 
+_ERR_RE = re.compile(r"^(?:obf|\[string)[^\n]{0,40}?:\d+:")
+_RANDOM_NAME_RE = re.compile(r"^(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{6,20}$")
+
+
 def _clean_constants(items):
     """Drop fragments of longer strings and short random-looking junk produced while a vm assembles its string pool."""
     uniq = list(dict.fromkeys(items))
@@ -119,6 +124,8 @@ def _clean_constants(items):
             continue  # substring of another captured string
         if len(c) <= 8 and any(ch.isdigit() for ch in c) and any(ch.isalpha() for ch in c) and not c.isidentifier():
             continue
+        if _ERR_RE.match(c) or _RANDOM_NAME_RE.match(c):
+            continue  # sandbox error text / a protector's generated identifiers
         keep.append(c)
     return keep
 
