@@ -82,3 +82,22 @@ def remove(src):
     if removed:
         notes.append("neutralised %d logger statement(s)" % removed)
     return "\n".join(lines), notes
+
+
+def scan_runtime(blob):
+    """Run the same rules over text produced at run time (reconstruction, decoded strings, urls)."""
+    return scan(blob)
+
+
+def remove_from_trace(text):
+    """Comment out reconstructed lines that talk to an exfil endpoint or harvest credentials; returns (clean, notes)."""
+    out, n = [], 0
+    for line in text.split("\n"):
+        if line.startswith("--"):
+            out.append(_URL_RE.sub(PLACEHOLDER_URL, line))
+        elif any(rx.search(line) for rid, rx, _, _ in _RULES if rid != "teleport-queue"):
+            out.append("-- [logger removed] " + _URL_RE.sub(PLACEHOLDER_URL, line.strip()))
+            n += 1
+        else:
+            out.append(line)
+    return "\n".join(out), (["commented out %d logger line(s)" % n] if n else [])

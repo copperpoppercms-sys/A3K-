@@ -7,3 +7,4 @@ Real obfuscator output, generated from `tests/samples/src1.lua` with the open-so
 (its garbage-code pass moves a loop body out of scope); the tests assert we report that faithfully.
 - `ib2_basic.lua`: IronBrew 2 (Trollicus/ironbrew-2, built locally on .NET 8 with Lua 5.1 tooling), default settings
 - `herc_web_162_congrats.lua`: Hercules v1.6.2 (web version) on the "congrats" test script. The obfuscated script itself crashes in plain Lua 5.1 too (`attempt to index field '?'` when building the notification table): a Hercules VM bug that `deobf/patches.py` repairs in the sandbox copy so the script can run.
+- `hard_gui.lua`: plain source of a harder script (gui, button callback, input handler, spawned loop, wait inside pcall, Heartbeat, infinite loop). `hard_*.lua` are real obfuscator outputs of it: Prometheus Strong, IronBrew 2 with string encryption, Hercules heavy, and IronBrew 2 layered over Prometheus Weak.

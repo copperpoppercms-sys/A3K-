@@ -112,13 +112,16 @@ def _summary(name, r):
 
 
 class RemoveLogger(discord.ui.Button):
-    def __init__(self, name, source):
+    def __init__(self, name, body, from_trace):
         super().__init__(label="Remove logger", style=discord.ButtonStyle.danger, emoji="🚨")
-        self.name, self.source = name, source
+        self.name, self.body, self.from_trace = name, body, from_trace
 
     async def callback(self, inter):
         await inter.response.defer(thinking=True)
-        clean, notes = await _job(logger.remove, self.source)
+        if self.from_trace:
+            clean, notes = logger.remove_from_trace(self.body)
+        else:
+            clean, notes = await _job(logger.remove, self.body)
         await inter.followup.send("; ".join(notes) or "nothing to strip", file=_file(with_header(clean), "clean_" + self.name))
 
 
@@ -137,7 +140,7 @@ class ResultView(discord.ui.View):
     def __init__(self, name, raw, r):
         super().__init__(timeout=900)
         if r.is_logger:
-            self.add_item(RemoveLogger(name, r.source))
+            self.add_item(RemoveLogger(name, r.body, r.shows_recon))
         self.add_item(EnginePicker(name, raw))
 
 

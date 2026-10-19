@@ -65,3 +65,14 @@ def test_header_is_first_line_and_utf8_safe():
     r = deobfuscate(load("herc_web_162_congrats.lua"))
     first = r.best.encode("latin-1").decode("utf-8").splitlines()[0]
     assert first == "-- Deobfuscated By Rift \U0001F602\U0001FAF5"
+
+
+HARD_MARKERS = ['Instance.new("ScreenGui")', "RiftHub", "MouseButton1Click", "SendNotification", "E pressed", '"tick", 3', "after wait inside pcall", "Humanoid.Health = 100"]
+
+
+@pytest.mark.parametrize("name", ["hard_prom_Strong.lua", "hard_ib2_enc.lua", "hard_herc_heavy.lua", "hard_nested_ib2_over_prom.lua"])
+def test_hard_gui_script_fully_recovered(name):
+    r = deobfuscate(load(name))
+    text = r.recon
+    assert r.error == ""
+    assert [m for m in HARD_MARKERS if m not in text] == []

@@ -36,13 +36,22 @@ class Result:
     changed: bool = False
 
     @property
-    def best(self):
-        """Readable output: recovered source, or the behaviour reconstruction for vm payloads that never reach loadstring."""
+    def shows_recon(self):
         vm = BY_NAME.get(self.engine) and BY_NAME[self.engine].vm
-        if self.recon and (not self.changed or (not self.layers and (vm or self.obf_after >= 25))):
+        return bool(self.recon and (not self.changed or (not self.layers and (vm or self.obf_after >= 25))))
+
+    @property
+    def body(self):
+        """The deliverable without the header line."""
+        if self.shows_recon:
             code = [ln for ln in self.recon.splitlines() if not ln.startswith("--")]
-            return with_header("\n".join(code) if code else self.recon)
-        return with_header(self.source)
+            return "\n".join(code) if code else self.recon
+        return self.source
+
+    @property
+    def best(self):
+        """Readable output: recovered source, or the code the script ran when a vm payload never reaches loadstring."""
+        return with_header(self.body)
 
     @property
     def is_logger(self):
@@ -126,6 +135,11 @@ def deobfuscate(src, engine=None, dynamic=True, max_layers=8, seconds=10, fetch=
     res.changed = cur != original
     res.obf_after = obfuscation_score(cur)
     res.findings = logger.scan(cur)
+    blob = "\n".join([res.recon] + ["-- url: " + u for u in res.urls] + res.constants + res.posts)
+    merged = {}
+    for f in res.findings + logger.scan_runtime(blob):
+        merged.setdefault((f.id, f.snippet), f)
+    res.findings = list(merged.values())
     return res
 
 

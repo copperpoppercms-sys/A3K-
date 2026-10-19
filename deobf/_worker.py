@@ -65,7 +65,14 @@ mk = function(name)
       if k == "Name" or k == "DisplayName" then return "Player" end
       return mk(name .. "." .. tostring(k))
     end,
-    __newindex = function(_, k, v) T(name .. "." .. tostring(k) .. " = " .. q(v)) end,
+    __newindex = function(_, k, v)
+      if type(v) == "function" and type(k) == "string" and (k:match("^On") or k:match("Callback$") or k:match("Handler$")) and #callbacks < 60 then
+        callbacks[#callbacks + 1] = {fn = v, label = name .. "." .. k}
+        T(name .. "." .. k .. " = function(...) end")
+      else
+        T(name .. "." .. tostring(k) .. " = " .. q(v))
+      end
+    end,
     __call = function(_, ...)
       local args = table.pack and table.pack(...) or {n = select("#", ...), ...}
       local m = name:match("([^.]+)$")
@@ -96,7 +103,11 @@ mk = function(name)
         end
         return ""
       end
-      if m == "HttpPost" or m == "PostAsync" or m == "GetAsync" or m == "RequestAsync" then return "" end
+      if m == "RequestAsync" then
+        note_urls(args)
+        return {Body = "", StatusCode = 200, Success = true, Headers = {}}
+      end
+      if m == "HttpPost" or m == "PostAsync" or m == "GetAsync" then return "" end
       return mk(text)
     end,
     __tostring = function() return name end,
@@ -379,6 +390,29 @@ env.isfile = function() return false end
 env.isfolder = function() return false end
 env.makefolder = function() end
 env.queue_on_teleport = function(s) T("queue_on_teleport(" .. q(s) .. ")") end
+local function rec(name, ret)
+  env[name] = function(...)
+    local args = {n = select("#", ...), ...}
+    T(call_text(name, args))
+    note_urls(args)
+    if type(ret) == "function" then return ret(args) end
+    return ret
+  end
+end
+for _, n in ipairs({"fireclickdetector", "firetouchinterest", "fireproximityprompt", "firesignal", "setfpscap", "setreadonly", "make_writeable",
+  "setrawmetatable", "mouse1click", "mouse1press", "mouse1release", "mousemoverel", "mousescroll", "keypress", "keyrelease", "keyclick",
+  "rconsoleprint", "rconsolewarn", "rconsoleerr", "rconsoleinfo", "rconsoleclear", "rconsolename", "consoleprint", "consoleclear",
+  "setthreadidentity", "setidentity", "setthreadcontext", "appendfile", "delfile", "delfolder", "saveinstance", "setscriptable",
+  "sethiddenproperty", "setsimulationradius", "replicatesignal", "toclipboard", "printidentity"}) do rec(n, nil) end
+for _, n in ipairs({"getconnections", "getscripts", "getloadedmodules", "getinstances", "getnilinstances", "listfiles", "getallthreads"}) do rec(n, function() return {} end) end
+for _, n in ipairs({"cloneref", "gethui", "getcallingscript", "getsenv", "getscriptclosure", "getproperties"}) do rec(n, function(a) return a[1] or mk(n .. "()") end) end
+for _, n in ipairs({"getcustomasset", "getsynasset", "decompile", "getscriptbytecode", "getscripthash"}) do rec(n, "") end
+for _, n in ipairs({"isrbxactive", "isexecutorclosure", "is_synapse_function", "iscclosure", "islclosure", "compareinstances", "isreadonly"}) do rec(n, false) end
+rec("getthreadidentity", 7)
+env.getidentity, env.getthreadcontext = env.getthreadidentity, env.getthreadidentity
+env.getrawmetatable = function(o) return getmetatable(o) or {} end
+env.clonefunction = function(f) return f end
+env.messagebox = function(...) T(call_text("messagebox", {n = select("#", ...), ...})) return 1 end
 env.shared, env._G, env._VERSION = {}, {}, "Luau"
 env._G._G = env._G
 for _, k in ipairs({"game", "workspace", "script", "Instance", "Vector3", "Vector2", "CFrame", "Color3", "BrickColor", "UDim2", "UDim", "Enum", "Ray", "Random", "TweenInfo", "NumberSequence", "ColorSequence", "Rect", "Region3", "Drawing", "task", "Players", "RunService", "UserInputService", "HttpService", "TweenService", "Lighting", "ReplicatedStorage", "StarterGui", "CoreGui", "TeleportService", "MarketplaceService", "Stats", "Workspace"}) do
