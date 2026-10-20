@@ -2,12 +2,20 @@
 Executes untrusted Lua 5.1 in a stubbed environment: no io/os.execute/network/file access, every Roblox/executor API is a recording proxy."""
 import json
 import sys
+import time
 
 BOOT = r'''
 local emit, real_loadstring, real_pcall, real_setfenv, real_clock, sethook, real_cocreate, real_cowrap, LIMIT, DEADLINE = ...
 local HTTP = rawget(_G, "__HTTP_MAP") or {}
 local env = {}
 local proxies = setmetatable({}, {__mode = "k"})
+local values = setmetatable({}, {__mode = "k"})
+local properties = setmetatable({}, {__mode = "k"})
+local classes = setmetatable({}, {__mode = "k"})
+local assumptions = {}
+local function assume(text)
+  if not assumptions[text] then assumptions[text]=true; emit("assumption", text) end
+end
 local ntrace, tcount = 0, {}
 local function T(s)
   local c = (tcount[s] or 0) + 1
@@ -20,7 +28,7 @@ local function q(v)
   local t = type(v)
   if proxies[v] then return proxies[v] end
   if t == "string" then return (string.gsub(string.format("%q", v), "\\\n", "\\n")) end
-  if t == "function" then return "function() end" end
+  if t == "function" then return "<function body unavailable>" end
   if t == "table" then return "{...}" end
   return tostring(v)
 end
@@ -45,7 +53,7 @@ local function note_urls(args)
     end
   end
 end
-local mk
+local mk, vector, udim, udim2
 local function call_text(name, args)
   local parts, first = {}, 1
   local base, meth = name:match("^(.*)%.([^.%(%)]+)$")
@@ -55,20 +63,76 @@ local function call_text(name, args)
   local shown = base and (base .. sep .. meth) or name
   return shown .. "(" .. table.concat(parts, ", ") .. ")"
 end
-local callbacks, nvar = {}, 0
-local function eq_true() return true end
+local callbacks, connections, nvar = {}, {}, 0
+local gui_rotation = {Frame=true,TextLabel=true,TextButton=true,ImageLabel=true,ImageButton=true,ScrollingFrame=true,CanvasGroup=true,VideoFrame=true,ViewportFrame=true,UIGradient=true}
+local function proxy_equal(a,b)
+  local x,y=values[a],values[b]
+  if x and y and x.kind==y.kind then
+    for k,v in pairs(x) do if y[k]~=v then return false end end
+    return true
+  end
+  return proxies[a]~=nil and proxies[a]==proxies[b]
+end
+vector = function(name,kind,x,y,z)
+  local p=mk(name); values[p]={kind=kind,X=x or 0,Y=y or 0}
+  if kind=="Vector3" then values[p].Z=z or 0 end
+  return p
+end
+udim = function(name,scale,offset)
+  local p=mk(name); values[p]={kind="UDim",Scale=scale or 0,Offset=offset or 0}; return p
+end
+udim2 = function(name,xs,xo,ys,yo)
+  local p=mk(name); values[p]={kind="UDim2",X=udim(name..".X",xs,xo),Y=udim(name..".Y",ys,yo)}; return p
+end
+local function arithmetic(a,b,op)
+  local x,y=values[a],values[b]
+  local v=x or y
+  if not v or (v.kind~="Vector2" and v.kind~="Vector3") then
+    error("sandbox: unsupported proxy arithmetic "..q(a).." "..op.." "..q(b),0)
+  end
+  if x and y and x.kind~=y.kind then error("sandbox: vector dimensions differ",0) end
+  if (not x and type(a)~="number") or (not y and type(b)~="number") then error("sandbox: invalid vector operand",0) end
+  if (op=="+" or op=="-") and (not x or not y) then error("sandbox: vector addition/subtraction requires vectors",0) end
+  local function component(k)
+    local l,r=x and x[k] or a,y and y[k] or b
+    if op=="+" then return l+r elseif op=="-" then return l-r elseif op=="*" then return l*r else return l/r end
+  end
+  return vector("("..q(a).." "..op.." "..q(b)..")",v.kind,component("X"),component("Y"),v.kind=="Vector3" and component("Z") or nil)
+end
 mk = function(name)
   local p = {}
   proxies[p] = name
+  properties[p] = {}
   return setmetatable(p, {
     __index = function(_, k)
+      local value=values[p]
+      if value then
+        if value[k]~=nil and k~="kind" then return value[k] end
+        if value.kind=="Vector2" or value.kind=="Vector3" then
+          local magnitude=math.sqrt(value.X^2+value.Y^2+(value.Z or 0)^2)
+          if k=="Magnitude" then return magnitude end
+          if k=="Unit" then return vector(name..".Unit",value.kind,value.X/(magnitude~=0 and magnitude or 1),value.Y/(magnitude~=0 and magnitude or 1),(value.Z or 0)/(magnitude~=0 and magnitude or 1)) end
+          if k=="Lerp" then return function(_,other,alpha) return arithmetic(p,arithmetic(arithmetic(other,p,"-"),alpha,"*"),"+") end end
+          if k=="Dot" then return function(_,other) local v=values[other]; if not v or v.kind~=value.kind then error("invalid vector",0) end return value.X*v.X+value.Y*v.Y+(value.Z or 0)*(v.Z or 0) end end
+        end
+      end
+      if properties[p][k]~=nil then return properties[p][k] end
+      if (k=="Rotation" or k=="AbsoluteRotation") and gui_rotation[classes[p]] then return 0 end
+      if k=="Connected" and connections[name] then return connections[name].active end
+      if (name=="Vector2" or name=="Vector3") and (k=="zero" or k=="one") then local v=k=="one" and 1 or 0; return vector(name.."."..k,name,v,v,v) end
+      if k=="AbsolutePosition" or k=="AbsoluteSize" or k=="ViewportSize" then
+        assume("Screen geometry is simulated: origin (0,0), GUI size (400,280), viewport (1920,1080).")
+        return vector(name.."."..k,"Vector2",k=="ViewportSize" and 1920 or k=="AbsoluteSize" and 400 or 0,k=="ViewportSize" and 1080 or k=="AbsoluteSize" and 280 or 0)
+      end
       if k == "Name" or k == "DisplayName" then return "Player" end
       return mk(name .. "." .. tostring(k))
     end,
     __newindex = function(_, k, v)
+      if values[p] then error("sandbox: value types are immutable",0) end
+      properties[p][k]=v
       if type(v) == "function" and type(k) == "string" and (k:match("^On") or k:match("Callback$") or k:match("Handler$")) and #callbacks < 60 then
-        callbacks[#callbacks + 1] = {fn = v, label = name .. "." .. k}
-        T(name .. "." .. k .. " = function(...) end")
+        callbacks[#callbacks + 1] = {fn = v, label = name .. "." .. k, active = true}
+        T("-- callback registered: " .. name .. "." .. k .. " (body unavailable)")
       else
         T(name .. "." .. tostring(k) .. " = " .. q(v))
       end
@@ -80,9 +144,14 @@ mk = function(name)
         local fn
         for i = 1, args.n do if type(args[i]) == "function" then fn = args[i] break end end
         local sig = name:match("^(.*)%.[^.]+$") or name
-        T(sig .. ":" .. m .. "(function(...) end)")
-        if fn and #callbacks < 60 then callbacks[#callbacks + 1] = {fn = fn, label = sig} end
-        return mk(sig .. ":" .. m .. "()")
+        T("-- callback registered: " .. sig .. ":" .. m .. " (body unavailable)")
+        if not fn then error("sandbox: Connect expects a function",0) end
+        if #callbacks >= 60 then emit("simulation_limit","Callback registration limit (60) reached; some handlers were not explored."); return mk("untracked_connection") end
+        local cb={fn=fn,label=sig,active=true,once=m=="Once"}
+        callbacks[#callbacks+1]=cb
+        local connection="connection"..#callbacks
+        connections[connection]=cb
+        return mk(connection)
       end
       local text = call_text(name, args)
       note_urls(args)
@@ -91,9 +160,21 @@ mk = function(name)
         nvar = nvar + 1
         local v = "v" .. nvar
         T("local " .. v .. " = " .. text)
-        return mk(v)
+        local instance=mk(v); classes[instance]=args[1]; return instance
       end
       T(text)
+      if m=="Disconnect" and connections[owner] then connections[owner].active=false; return end
+      if m=="new" and (owner=="Vector2" or owner=="Vector3") then return vector(text,owner,args[1],args[2],args[3]) end
+      if m=="new" and owner=="UDim" then return udim(text,args[1],args[2]) end
+      if owner=="UDim2" then
+        if m=="new" then return udim2(text,args[1],args[2],args[3],args[4]) end
+        if m=="fromOffset" then return udim2(text,0,args[1],0,args[2]) end
+        if m=="fromScale" then return udim2(text,args[1],0,args[2],0) end
+      end
+      if m=="GetMouseLocation" then
+        assume("Mouse position is simulated as (0,0); no real user input is available.")
+        return vector(text,"Vector2",0,0)
+      end
       if m == "HttpGet" or m == "HttpGetAsync" then
         local url = args[1]
         if proxies[url] then url = args[2] end
@@ -108,14 +189,15 @@ mk = function(name)
         return {Body = "", StatusCode = 200, Success = true, Headers = {}}
       end
       if m == "HttpPost" or m == "PostAsync" or m == "GetAsync" then return "" end
+      if m=="Play" or m=="Pause" or m=="Stop" or m=="Cancel" or m=="Destroy" or m=="Disconnect" then return end
       return mk(text)
     end,
     __tostring = function() return name end,
     __concat = function(a, b) return tostring(a) .. tostring(b) end,
-    __add = function() return 0 end, __sub = function() return 0 end, __mul = function() return 0 end,
-    __div = function() return 0 end, __mod = function() return 0 end, __pow = function() return 0 end,
-    __unm = function() return 0 end, __len = function() return 0 end,
-    __lt = function() return false end, __le = function() return false end, __eq = eq_true,
+    __add = function(a,b) return arithmetic(a,b,"+") end, __sub = function(a,b) return arithmetic(a,b,"-") end, __mul = function(a,b) return arithmetic(a,b,"*") end,
+    __div = function(a,b) return arithmetic(a,b,"/") end, __mod = function() error("sandbox: unsupported proxy modulo",0) end, __pow = function() error("sandbox: unsupported proxy exponent",0) end,
+    __unm = function(a) return arithmetic(a,-1,"*") end, __len = function() return 0 end,
+    __lt = function() return false end, __le = function() return false end, __eq = proxy_equal,
   })
 end
 
@@ -202,7 +284,7 @@ wm.round = function(x) return x >= 0 and math.floor(x + 0.5) or math.ceil(x - 0.
 wm.noise = function() return 0 end
 getmetatable("").__index = ws
 env.string, env.table, env.math = ws, wt, wm
-env.typeof = function(v) if proxies[v] then return "Instance" end return type(v) end
+env.typeof = function(v) if values[v] then return values[v].kind end if proxies[v] then return "Instance" end return type(v) end
 env.newproxy = function(m) local p = {} if m then setmetatable(p, {}) end return p end
 env.gcinfo = function() return collectgarbage("count") end
 env.coroutine = {
@@ -336,7 +418,7 @@ local function spawn_thread(f, ...)
   managed[th.co] = true
   threads[#threads + 1] = th
   local ok, err = coroutine.resume(th.co, ...)
-  if not ok then T("-- error in task: " .. tostring(err)) end
+  if not ok then T("-- error in task: " .. tostring(err)); emit("task_error",tostring(err)) end
   return th
 end
 env.wait = function()
@@ -437,18 +519,47 @@ end
 LIMIT = hook
 sethook(hook, "", 10000)
 
-return function(source)
+local inputs={}
+local function callback_args(cb,variant)
+  local event=cb.label:match("([^.]+)$")
+  if event=="RenderStepped" or event=="Heartbeat" or event=="PreRender" then
+    assume("Frame events use a simulated delta time of 1/60 second.")
+    return {n=1,1/60}
+  end
+  if event=="Stepped" then return {n=2,0,1/60} end
+  if event=="MouseButton1Click" or event=="MouseButton2Click" then return {n=0} end
+  if event=="MouseEnter" or event=="MouseLeave" or event=="MouseMoved" then return {n=2,0,0} end
+  if event=="InputBegan" or event=="InputChanged" or event=="InputEnded" then
+    assume("Input events use a synthetic InputObject at (0,0,0), KeyCode.E, and MouseButton1/MouseMovement; processed-input true/false variants are separate simulations.")
+    local p=mk("arg1"); inputs[#inputs+1]=p
+    properties[p].Position=vector("arg1.Position","Vector3",0,0,0)
+    properties[p].Delta=vector("arg1.Delta","Vector3",0,0,0)
+    properties[p].KeyCode=mk("Enum.KeyCode.E")
+    properties[p].UserInputType=mk("Enum.UserInputType."..(event=="InputChanged" and "MouseMovement" or "MouseButton1"))
+    properties[p].UserInputState=mk("Enum.UserInputState."..(event=="InputEnded" and "End" or event=="InputChanged" and "Change" or "Begin"))
+    return {n=2,p,not variant}
+  end
+  if event=="Changed" then
+    for _,p in ipairs(inputs) do properties[p].UserInputState=mk("Enum.UserInputState.End") end
+    return {n=1,"UserInputState"}
+  end
+  assume("Unknown callback signatures receive synthetic arg1/arg2/arg3 recording proxies; this is exploratory input.")
+  return variant and {n=3,mk("arg1"),false,false} or {n=3,mk("arg1"),mk("arg2"),mk("arg3")}
+end
+
+return function(source,scenario)
   if source:byte(1) == 27 then emit("error", "syntax: binary chunk rejected") return end
   local f, err = real_loadstring(source, "=obf")
   if not f then emit("error", "syntax: " .. tostring(err)) return end
   real_setfenv(f, env)
   local main = {co = newco(f)}
+  local main_failed=false
   managed[main.co] = true
   threads[1] = main
   local function step(th)
     local ok, e = coroutine.resume(th.co)
     if not ok then
-      if th == main then emit("error", tostring(e)) else T("-- error in task: " .. tostring(e)) end
+      if th == main then main_failed=true; emit("error", tostring(e)) else T("-- error in task: " .. tostring(e)); emit("task_error",tostring(e)) end
     end
   end
   local function pump(ticks)
@@ -464,21 +575,31 @@ return function(source)
   end
   step(main)
   pump(60)
-  local i = 1
-  while i <= #callbacks and i <= 60 and real_clock() <= DEADLINE do
-    local cb = callbacks[i]
-    i = i + 1
-    T("-- callback: " .. cb.label)
-    spawn_thread(cb.fn, mk("arg1"), mk("arg2"), mk("arg3"))
-    pump(20)
-    T("-- callback: " .. cb.label .. " [second arg false]")
-    spawn_thread(cb.fn, mk("arg1"), false, false)
-    pump(20)
+  if scenario then
+    if main_failed then emit("simulation_error","Startup failed during callback replay; callback actions were not observed."); return callbacks end
+    threads={}
+    assume("Callback scenarios replay startup in a fresh runtime; setup background threads are paused during the selected callback.")
+    for index=1,#scenario do
+      local selected=scenario[index]
+      local cb=callbacks[selected.index]
+      if not cb or cb.label~=selected.label then emit("simulation_error","Callback registration changed or was unavailable during replay."); return callbacks end
+      if not cb.active then emit("simulation_skip","Callback connection was disconnected before this scenario step."); return callbacks end
+      if cb.once then cb.active=false end
+      if index==#scenario then
+        emit("callback_start",cb.label)
+        ntrace,tcount=0,{}
+      end
+      local args=callback_args(cb,selected.variant)
+      emit("callback_args",qt(args,2))
+      spawn_thread(cb.fn,unpack(args,1,args.n))
+      pump(20)
+    end
   end
   local extra = {}
   for text, c in pairs(tcount) do if c > 3 then extra[#extra + 1] = text .. "  -- repeated " .. c .. " times" end end
   table.sort(extra)
   for _, line in ipairs(extra) do emit("trace", line) end
+  return callbacks
 end, env, function(s) DEADLINE = real_clock() + s end
 '''
 
@@ -515,17 +636,88 @@ def main():
         ok, err = lua.eval("function(s) local f, e = loadstring(s) return f ~= nil, e or '' end")(src)
         emit("ok" if ok else "error", err)
         return
-    lua = LuaRuntime(encoding=None, register_eval=False, register_builtins=False, unpack_returned_tuples=True)
-    g = lua.globals()
-    clock = lua.eval("os.clock")
-    deadline = clock() + job.get("seconds", 10)
-    loader = lua.eval("function(code, ...) return assert(loadstring(code))(...) end")
-    g[b"__HTTP_MAP"] = lua.table_from({k.encode("latin-1"): v.encode("latin-1") for k, v in (job.get("http") or {}).items()})
-    runner, env, extend = loader(
-        BOOT.encode(), emit, g.loadstring, g.pcall, g.setfenv, clock, g.debug.sethook,
-        g.coroutine.create, g.coroutine.wrap, None, deadline,
-    )
-    runner(src)
+    deadline = time.process_time() + job.get("seconds", 10)
+
+    def runtime(sink):
+        state = LuaRuntime(encoding=None, register_eval=False, register_builtins=False, unpack_returned_tuples=True)
+        g = state.globals()
+        loader = state.eval("function(code, ...) return assert(loadstring(code))(...) end")
+        g[b"__HTTP_MAP"] = state.table_from({k.encode("latin-1"): v.encode("latin-1") for k, v in (job.get("http") or {}).items()})
+        runner, env, extend = loader(
+            BOOT.encode(), sink, g.loadstring, g.pcall, g.setfenv, state.eval("os.clock"), g.debug.sethook,
+            g.coroutine.create, g.coroutine.wrap, None, deadline,
+        )
+        return state, runner, env, extend
+
+    def text(value):
+        return value.decode("latin-1") if isinstance(value, bytes) else value
+
+    def startup_emit(kind, value):
+        if text(kind) == "task_error":
+            emit("task_error", {"phase": "startup", "error": text(value)})
+        else:
+            emit(kind, value)
+
+    lua, runner, env, extend = runtime(startup_emit)
+    registered = runner(src)
+    initial_count = len(registered) if registered is not None else 0
+    initial = [(i, text(registered[i][b"label"])) for i in range(1, initial_count + 1) if registered[i][b"active"]]
+    if initial:
+        emit("assumption", "Callback exploration uses limited synthetic inputs; cross-signal interactions and original control flow are not reconstructed.")
+    plans = [[{"index": i, "label": label, "variant": variant}] for i, label in initial for variant in (False, True)]
+    cursor = 0
+    max_runs = 48
+    while cursor < len(plans) and cursor < max_runs and time.process_time() < deadline:
+        path = plans[cursor]
+        cursor += 1
+        selected = path[-1]
+        started, errors, argument_description, skipped = False, [], "", False
+
+        def replay_emit(kind, value):
+            nonlocal started, argument_description, skipped
+            kind, value = text(kind), text(value)
+            if kind == "callback_start":
+                started = True
+                label = value.replace("\n", "\\n").replace("\r", "\\r")
+                emit("trace", "-- callback: " + label + (" [second arg false]" if selected["variant"] else ""))
+            elif kind == "simulation_error":
+                errors.append(value)
+                emit("simulation_limit", value)
+            elif kind == "simulation_skip":
+                skipped = True
+            elif kind == "assumption":
+                emit(kind, value)
+            elif started:
+                if kind == "callback_args":
+                    argument_description = value
+                elif kind == "capture":
+                    emit("callback_capture", {"callback": selected["label"], "scenario": cursor, "source": value})
+                elif kind == "task_error":
+                    errors.append(value)
+                    emit("task_error", {"phase": "callback", "callback": selected["label"], "scenario": cursor, "error": value})
+                else:
+                    emit(kind, value)
+
+        replay_lua, replay, _, _ = runtime(replay_emit)
+        scenario = replay_lua.table_from([
+            replay_lua.table_from({key.encode(): value.encode("latin-1") if isinstance(value, str) else value for key, value in step.items()})
+            for step in path
+        ])
+        discovered = replay(src, scenario)
+        emit("callback_run", {"callback": selected["label"], "path": path, "arguments": argument_description,
+                              "started": started, "errors": errors, "status": "errors" if errors else "disconnected" if skipped else "observed" if started else "unavailable"})
+        if discovered is not None and started and not errors:
+            known = {step["index"] for step in path}
+            for i in range(initial_count + 1, len(discovered) + 1):
+                if i in known or not discovered[i][b"active"]:
+                    continue
+                label = text(discovered[i][b"label"])
+                for variant in (False, True):
+                    if len(plans) < max_runs + 1:
+                        plans.append(path + [{"index": i, "label": label, "variant": variant}])
+        del discovered, replay, replay_lua, scenario
+    if cursor < len(plans):
+        emit("simulation_limit", "Callback exploration stopped at the shared CPU budget or 48-scenario limit; coverage is incomplete.")
     queries = job.get("queries") or []
     if queries:
         extend(job.get("query_seconds", 10))

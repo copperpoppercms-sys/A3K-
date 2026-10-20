@@ -43,6 +43,15 @@ class Result:
     stop_reason: str = "complete"
     unresolved_urls: list = field(default_factory=list)
     compatibility: list = field(default_factory=list)
+    assumptions: list = field(default_factory=list)
+    callback_runs: list = field(default_factory=list)
+    callback_captures: list = field(default_factory=list)
+    task_errors: list = field(default_factory=list)
+    simulation_limits: list = field(default_factory=list)
+
+    @property
+    def callback_errors(self):
+        return [item for item in self.task_errors if item.get("phase") == "callback"]
 
     @property
     def shows_recon(self):
@@ -94,7 +103,7 @@ class Result:
 
     def to_report(self):
         report = asdict(self)
-        report.update(output_kind=self.output_kind, recovery_status=self.recovery_status, score_kind="heuristic evidence, not probability")
+        report.update(output_kind=self.output_kind, recovery_status=self.recovery_status, callback_errors=self.callback_errors, score_kind="heuristic evidence, not probability")
         return report
 
 
@@ -221,6 +230,10 @@ def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
         res.notes.append("maximum layer count reached; remaining payload kept")
     if ran is not None:
         res.urls, res.posts, res.trace, res.prints, res.constants = ran.urls, ran.posts, ran.trace, ran.prints, ran.constants
+        res.assumptions, res.callback_runs, res.task_errors, res.simulation_limits = ran.assumptions, ran.callback_runs, ran.task_errors, ran.simulation_limits
+        res.callback_captures = ran.callback_captures
+        for capture in ran.callback_captures:
+            findings.extend(logger.scan(capture["source"]))
         res.recon = reconstruct(ran)
         res.error = ran.error
         if ran.timed_out:
@@ -230,6 +243,12 @@ def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
             res.stop_reason = "syntax-error" if ran.error.startswith("syntax:") else "runtime-error"
             if res.stop_reason == "syntax-error":
                 res.notes.append("script did not execute; static changes are not verified payload recovery")
+        elif ran.task_errors:
+            res.stop_reason = "simulation-errors"
+            res.notes.append("%d task/callback error(s) occurred during simulation; see task_errors and callback_runs in the report" % len(ran.task_errors))
+        elif ran.simulation_limits:
+            res.stop_reason = "simulation-limit"
+        res.notes.extend(ran.simulation_limits)
     res.unresolved_urls = unresolved
     if unresolved:
         if res.stop_reason == "complete":
@@ -275,7 +294,12 @@ def reconstruct(r):
     """Observable behaviour of a sandbox run as a pseudo-Luau script."""
     if not (r.trace or r.urls or r.constants or r.captures or r.posts):
         return ""
-    out = ["-- reconstructed observable behaviour (partial observations, not original source)"]
+    out = ["-- reconstructed observable behaviour (partial observations, not original source)",
+           "-- DIAGNOSTIC ONLY: not executable code. Callback bodies were not decompiled.",
+           "-- Each callback section is a separate simulation with fresh startup state."]
+    out.extend("-- assumption: " + note for note in r.assumptions)
+    out.extend("-- simulation limit: " + note for note in r.simulation_limits)
+    out.append("-- Startup observations:")
     for u in r.urls:
         out.append("-- url: " + u)
     for u in r.unresolved_gets:
@@ -283,6 +307,8 @@ def reconstruct(r):
     out += recon.tidy(r.trace)
     for i, c in enumerate(r.captures, 1):
         out.append("-- loadstring chunk %d (%d bytes)" % (i, len(c)))
+    for capture in r.callback_captures:
+        out.append("-- callback loadstring chunk: %s (%d bytes; source is in the JSON report)" % (capture["callback"], len(capture["source"])))
     for p in r.posts:
         out.append("-- POST " + p)
     if r.error:
@@ -292,7 +318,10 @@ def reconstruct(r):
     if r.constants:
         out.append("-- decoded strings (%d):" % len(r.constants))
         out += ["--   " + c.replace("\n", "\\n")[:200] for c in r.constants[:400]]
-    return "\n".join(out)
+    # Observations cannot reproduce the original control flow. Comment every
+    # physical line, including hostile/multiline values, so nothing masquerades
+    # as executable source or introduces undefined callback variables.
+    return "\n".join(line if line.startswith("--") else "-- " + line for item in out for line in item.splitlines())
 
 
 def trace_behavior(src, seconds=10):

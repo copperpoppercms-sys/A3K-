@@ -161,6 +161,10 @@ def _summary(name, r):
         "unchanged": "No source changes. This does not establish that deobfuscation succeeded.",
     }
     emb.add_field(name="recovery", value=recovery_text[r.recovery_status], inline=False)
+    if r.task_errors or r.simulation_limits:
+        emb.add_field(name="simulation incomplete", value="%d task/callback error(s), %d exploration limit(s). Details are retained in the report and trace." % (len(r.task_errors), len(r.simulation_limits)), inline=False)
+    if r.assumptions:
+        emb.add_field(name="simulation assumptions", value="\n".join(r.assumptions[:3])[:1000], inline=False)
     if r.stop_reason == "syntax-error":
         emb.colour = 0xFEE75C
         emb.add_field(name="execution", value="The script did not execute. Static edits are not verified payload recovery.", inline=False)
@@ -190,7 +194,7 @@ def _summary(name, r):
 
 def _result_file(name, result):
     prefix = "trace_" if result.shows_recon else "unrecovered_" if result.recovery_status == "not-recovered" else "deobf_"
-    return _file(result.best, prefix + os.path.basename(name))
+    return _file(result.best, prefix + os.path.basename(name) + (".txt" if result.shows_recon else ""))
 
 
 class RemoveLogger(discord.ui.Button):
@@ -204,7 +208,7 @@ class RemoveLogger(discord.ui.Button):
             clean, notes = logger.remove_from_trace(self.body)
         else:
             clean, notes = await _job(logger.remove, self.body)
-        await inter.followup.send("; ".join(notes) or "nothing to strip", file=_file(with_header(clean), "clean_" + self.name))
+        await inter.followup.send("; ".join(notes) or "nothing to strip", file=_file(with_header(clean), "clean_" + self.name + (".txt" if self.from_trace else "")))
 
 
 class EnginePicker(discord.ui.Select):
@@ -334,7 +338,7 @@ async def luau_cmd(ctx, *, arg=""):
                 await _file_error(ctx, name, result)
                 continue
             text, _run = result
-            await ctx.reply("behaviour trace: **%s**" % name[:120], file=_file(text, "trace_" + os.path.basename(name)), mention_author=False)
+            await ctx.reply("diagnostic behaviour trace (not executable source): **%s**" % name[:120], file=_file(text, "trace_" + os.path.basename(name) + ".txt"), mention_author=False)
 
 
 class FetchView(JobView):
@@ -352,7 +356,7 @@ class FetchView(JobView):
     async def envlog(self, inter, _):
         await inter.response.defer(thinking=True)
         text, _r = await _job(trace_behavior, self.raw)
-        await inter.followup.send(file=_file(text, "envlog_" + self.name))
+        await inter.followup.send(file=_file(text, "envlog_" + self.name + ".txt"))
 
 
 @bot.command(name="get")

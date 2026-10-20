@@ -19,7 +19,7 @@ def test_reports_headers_and_discord_files_distinguish_recovery(result, kind, st
     assert report['output_kind'] == kind and report['recovery_status'] == status
     assert result.best.splitlines()[0] == '-- Analyzed by A3K Deobfuscator | ' + kind
     file = _result_file('sample.lua', result)
-    assert file.filename == prefix + 'sample.lua'
+    assert file.filename == prefix + 'sample.lua' + ('.txt' if result.shows_recon else '')
     assert file.fp.read().decode() == result.best
     file.close()
     embed = _summary('sample.lua', result)

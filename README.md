@@ -35,6 +35,20 @@ can misclassify code; neither a low score nor a clean run proves original source
 recovery. Discord uses `trace_` and `unrecovered_` attachment names and explicit
 recovery messages for those outcomes.
 
+Behavior traces are **comment-only diagnostics**, delivered as `.txt` files by
+the bot. They contain no invented empty event-handler functions. Callback
+registrations say that their bodies are unavailable; observed callback actions
+are separate scenarios, not executable code joined to startup. Formatting does
+not cache effectful calls such as `TweenService:Create(...):Play()` or treat the
+return value of `Play()` as a usable object.
+
+Reports retain `callback_runs`, `callback_captures`, `task_errors`,
+`callback_errors`, `simulation_limits`, and `assumptions`. Callback errors produce
+`simulation-errors`, even if startup succeeded. Callback-loaded chunks remain
+separate from the entry script instead of replacing it as the main payload.
+Simplification cannot be verified by a run with task errors or limited callback
+exploration.
+
 When a loader requests a remote script but no response is available, the original
 loader is retained and reported as `partial-source` / `unresolved-http`. An empty
 sandbox HTTP response is never counted as recovered source. JSON reports list
@@ -90,7 +104,22 @@ Not tested against real output (no samples reachable): Luraph (any version), Moo
 
 Also covered by tests: a gui script with button callbacks, input handlers, spawned loops, `wait()` inside `pcall`, `Heartbeat` and an infinite loop, obfuscated with Prometheus Strong, IronBrew 2 (string encryption) and Hercules heavy, plus IronBrew 2 layered over Prometheus. A third-party sample (Rerubi VM loader from an archived obfuscator repo) also recovers correctly.
 
-How VM protectors are handled: there is no bytecode lifter. The script is run in the sandbox under a small cooperative scheduler (`spawn`/`wait`/`delay`/`pcall` behave like Roblox) and everything it does is recorded: API calls in order with arguments, urls, POSTs, prints, decoded strings. Event handlers (`:Connect`, `On*` properties) are fired once afterwards, with the second argument true and false, so code behind buttons and key presses shows up. Created objects get variables (`local v1 = Instance.new(...)`) and repeated service/property chains get local aliases. `--fetch` / `ALLOW_SCRIPT_FETCH=1` additionally downloads urls passed to `HttpGet` (public addresses only) so `loadstring(game:HttpGet(url))()` loaders can be followed.
+How VM protectors are handled: there is no bytecode lifter. The script runs under
+a bounded cooperative scheduler and its observable API calls, URLs, POSTs,
+prints, and strings are recorded. Each callback scenario replays startup in a
+fresh Lua runtime so one callback cannot contaminate another's captured state.
+Setup background threads are paused during the focused callback. Nested
+registrations replay their parent path. At most 48 scenarios run within the same
+CPU deadline; budget exhaustion and registration limits are explicit.
+
+Frame events receive numeric delta time. Input events receive synthetic input
+objects and processed-input true/false variants. Vector2/Vector3 arithmetic and
+components, UDim fields, enum equality, retained object properties, connection
+disconnection, and common void API returns are modeled. Mouse position and GUI
+geometry use documented simulation assumptions in the report; this is not a full
+Roblox runtime. Cross-signal interaction sequences and every possible input are
+not reconstructed. `--fetch` / `.keydeobf` additionally retrieves public HttpGet
+downloads under the existing limits.
 
 Limits: VM-based protectors (Luraph, IronBrew, MoonSec, ...) may never hand their payload to `loadstring`, so results can be a behavior trace (`.l`) rather than source. Unsupported Luau syntax (`continue`, type annotations) still does not compile in the Lua 5.1 sandbox; static passes run and the dynamic stage reports a syntax error. Traces contain only observations from the bounded sandbox run and simulated callbacks; they are not guaranteed complete or runnable scripts. Signatures are heuristics.
 

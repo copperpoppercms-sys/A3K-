@@ -94,10 +94,12 @@ def remove_from_trace(text):
     out, n = [], 0
     for line in text.split("\n"):
         if line.startswith("--"):
-            out.append(_URL_RE.sub(PLACEHOLDER_URL, line))
+            redacted, count = _URL_RE.subn(PLACEHOLDER_URL, line)
+            out.append(redacted)
+            n += bool(count)
         elif any(rx.search(line) for rid, rx, _, _ in _RULES if rid != "teleport-queue"):
             out.append("-- [logger removed] " + _URL_RE.sub(PLACEHOLDER_URL, line.strip()))
             n += 1
         else:
             out.append(line)
-    return "\n".join(out), (["commented out %d logger line(s)" % n] if n else [])
+    return "\n".join(out), (["redacted or disabled %d logger-related observation(s)" % n] if n else [])

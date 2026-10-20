@@ -57,10 +57,12 @@ def test_vm_output_preserves_its_trace_label_and_calls():
     r = deobfuscate(load("herc_web_162_congrats.lua"))
     assert r.output_kind == "behavior-trace"
     assert r.best.splitlines()[1].startswith("-- reconstructed observable behaviour")
-    assert [line for line in r.best.splitlines() if not line.startswith("--")] == [
+    assert all(line.startswith("--") for line in r.best.splitlines())
+    for observation in [
         'game:GetService("StarterGui"):SetCore("SendNotification", {Text = "congrats it worked :)!", Title = "Success", Duration = 5})',
         'print("congrats it worked :)!")',
-    ]
+    ]:
+        assert '-- ' + observation in r.best
 
 
 def test_header_is_first_line_and_utf8_safe():

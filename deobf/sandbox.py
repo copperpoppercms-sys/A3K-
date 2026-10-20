@@ -27,6 +27,15 @@ class Run:
     completed: bool = False
     unresolved_gets: list = field(default_factory=list)
     compatibility: list = field(default_factory=list)
+    assumptions: list = field(default_factory=list)
+    callback_runs: list = field(default_factory=list)
+    callback_captures: list = field(default_factory=list)
+    task_errors: list = field(default_factory=list)
+    simulation_limits: list = field(default_factory=list)
+
+    @property
+    def callback_errors(self):
+        return [item for item in self.task_errors if item.get("phase") == "callback"]
 
 
 def _spawn(job, timeout):
@@ -117,6 +126,16 @@ def run(source, seconds=10, queries=None, http=None):
             r.error = v
         elif k == "done":
             r.completed = True
+        elif k == "callback_run":
+            r.callback_runs.append(v)
+        elif k == "callback_capture":
+            r.callback_captures.append(v)
+        elif k == "task_error":
+            r.task_errors.append(v)
+        elif k == "assumption" and v not in r.assumptions:
+            r.assumptions.append(v)
+        elif k == "simulation_limit" and v not in r.simulation_limits:
+            r.simulation_limits.append(v)
     if timed_out:
         r.error = r.error or "sandbox: wall-clock limit"
     elif not r.completed and not r.error:
