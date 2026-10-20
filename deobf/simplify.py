@@ -1072,6 +1072,44 @@ def replace_calls(body, mapping):
     return n
 
 
+def idioms(body):
+    """Turn structured-decompiler shapes into the idiomatic form: `if c then else B end` -> `if not c then B end`,
+    `while true do if c then X else break end end` -> `while c do X end`."""
+    n = 0
+
+    def neg(c):
+        if type(c) is A.Un and c.op == "not":
+            return c.e
+        return A.Un("not", c)
+
+    def block(b):
+        nonlocal n
+        for s in b:
+            for sub in _stmt_blocks(s):
+                sub[:] = block(sub)
+            for e in _stmt_exprs(s):
+                for x in walk_exprs(e):
+                    if type(x) is A.Func:
+                        x.body = block(x.body)
+            if type(s) in (A.LocalFunc, A.FuncStmt):
+                s.func.body = block(s.func.body)
+            if type(s) is A.If and len(s.clauses) == 1 and not s.clauses[0][1] and s.orelse:
+                s.clauses = [(neg(s.clauses[0][0]), s.orelse)]
+                s.orelse = None
+                n += 1
+            if (
+                type(s) is A.While and type(s.cond) is A.Bool and s.cond.value and len(s.body) == 1 and type(s.body[0]) is A.If
+                and len(s.body[0].clauses) == 1 and s.body[0].orelse and len(s.body[0].orelse) == 1 and type(s.body[0].orelse[0]) is A.Break
+            ):
+                cond, inner = s.body[0].clauses[0]
+                s.cond, s.body = cond, inner
+                n += 1
+        return b
+
+    block(body)
+    return n
+
+
 def count_nodes(body):
     n = 0
 
@@ -1210,6 +1248,7 @@ def simplify(body, max_rounds=12, evaluator=None):
         stats["evaluated"] += n
         if not n:
             break
+    stats["removed"] += idioms(body)
     Analysis(body)
     stats["renamed"] = rename(body)
     stats["nodes_after"] = count_nodes(body)

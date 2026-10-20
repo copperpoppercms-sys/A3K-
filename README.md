@@ -75,6 +75,12 @@ proxies, like the other Roblox API stubs.
 Unresolved syntax errors now produce `syntax-error` / `unexecuted-source`, rather
 than presenting minor static edits as successful payload analysis.
 
+## VM decompilation
+
+- **Lua 5.1 bytecode** (`deobf/luac.py`, `deobf/decompile.py`): bytecode found in a script (string literals, byte arrays like the Rerubi loader, or passed to `loadstring` at run time) is parsed (never executed) and decompiled. The translation is exact (random programs are compiled, decompiled and must print the same) and is then structured into `if` / `while` (`deobf/structure.py`).
+- **IronBrew 2-style interpreters** (`deobf/devirt.py`): the interpreter loop is located, the VM is run once to dump its deserialized program, and the interpreter's *own handler code* is partially evaluated against every instruction. No opcode tables are needed, so mutated opcodes and super-operators are handled for free. The result replaces the interpreter by the program it ran (registers are still the VM's `Stk` table) and is only accepted when it behaves identically to the original. Functions whose control flow cannot be structured keep a dispatch-loop form.
+- Not covered: Luraph, MoonSec, Moonveil and other VMs whose shape differs; they still get the behaviour reconstruction.
+
 ## Source recovery for non-vm obfuscation
 
 When a script is not a vm protector, the bot parses it (`deobf/luaast.py`, a full Lua 5.1 parser with scope resolution), simplifies it (`deobf/simplify.py`) and prints readable source:

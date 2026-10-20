@@ -320,7 +320,7 @@ def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
             cleaned, info = deepstack.call(astclean.clean, cur, seconds=seconds)
             if cleaned is None:
                 res.notes.append("ast cleanup skipped: " + info)
-            elif info["nodes_after"] <= 0.85 * info["nodes_before"] or info["renamed"] >= 3 or info["evaluated"]:
+            elif info["nodes_after"] < info["nodes_before"] or info["renamed"] or info["evaluated"] or info["removed"]:
                 cur = cleaned
                 res.notes.append(
                     "ast cleanup (verified by re-running): removed %d, evaluated %d, renamed %d" % (info["removed"], info["evaluated"], info["renamed"])

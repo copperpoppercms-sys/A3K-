@@ -32,3 +32,8 @@ Tests: `python -m pytest`. Real obfuscator output lives in `tests/samples/` (see
 `tests/test_simplify.py` fuzzes the simplifier: it must never change what a program prints.
 
 Known gaps: no bytecode lifter for vm protectors (they get a behaviour reconstruction), Luraph/MoonSec/Moonveil/WeAreDevs-vm untested on real output.
+
+## VM decompilation modules
+`luac.py` (bytecode parser) -> `decompile.py` (exact translation + structuring) -> `structure.py` (blocks with constant successors -> if/while, post-dominator joins, loop selectors).
+`devirt.py` finds an IronBrew-style interpreter loop, dumps the program via the `__VMDUMP` worker hook, partially evaluates the handlers (`PE`), structures each function and prunes the loader.
+`bytecode.py` carves embedded bytecode; `deepstack.py` runs deep recursion on a big-stack thread.
