@@ -149,7 +149,18 @@ async def _file_error(ctx, name, error):
 
 
 def _summary(name, r):
-    emb = discord.Embed(title=("A3K Deobfuscator: %s" % name)[:256], colour=0x57F287 if r.changed else 0x99AAB5)
+    colour = 0x57F287 if r.recovery_status == "source-output" else 0x99AAB5
+    if r.recovery_status in ("not-recovered", "behavior-only", "partial"):
+        colour = 0xFEE75C
+    emb = discord.Embed(title=("A3K Deobfuscator: %s" % name)[:256], colour=colour)
+    recovery_text = {
+        "not-recovered": "Readable source was not recovered. The attached file retains source for analysis.",
+        "behavior-only": "Partial result: observed behavior only. Original source was not recovered; the trace is not a complete runnable script.",
+        "partial": "Analysis is incomplete. Check the status, notes, and report before using the output.",
+        "source-output": "Source output produced. Review the notes; this does not guarantee the exact original source.",
+        "unchanged": "No source changes. This does not establish that deobfuscation succeeded.",
+    }
+    emb.add_field(name="recovery", value=recovery_text[r.recovery_status], inline=False)
     if r.stop_reason == "syntax-error":
         emb.colour = 0xFEE75C
         emb.add_field(name="execution", value="The script did not execute. Static edits are not verified payload recovery.", inline=False)
@@ -177,6 +188,11 @@ def _summary(name, r):
     return emb
 
 
+def _result_file(name, result):
+    prefix = "trace_" if result.shows_recon else "unrecovered_" if result.recovery_status == "not-recovered" else "deobf_"
+    return _file(result.best, prefix + os.path.basename(name))
+
+
 class RemoveLogger(discord.ui.Button):
     def __init__(self, name, body, from_trace):
         super().__init__(label="Remove logger", style=discord.ButtonStyle.danger, emoji="🚨")
@@ -200,7 +216,7 @@ class EnginePicker(discord.ui.Select):
     async def callback(self, inter):
         await inter.response.defer(thinking=True)
         r = await _job(deobfuscate, self.raw, engine=self.values[0], fetch=self.follow)
-        await inter.followup.send(embed=_summary(self.name, r), file=_file(r.best, "deobf_" + self.name))
+        await inter.followup.send(embed=_summary(self.name, r), file=_result_file(self.name, r))
 
 
 class JobView(discord.ui.View):
@@ -230,7 +246,7 @@ async def run_deobf(ctx, arg, engine=None, dynamic=True, follow=None, include_re
             if isinstance(r, Exception):
                 await _file_error(ctx, name, r)
                 continue
-            files = [_file(r.best, "deobf_" + os.path.basename(name))]
+            files = [_result_file(name, r)]
             if include_report:
                 files.append(_file(json.dumps(r.to_report(), indent=2, ensure_ascii=True), "report_" + name + ".json"))
             await ctx.reply(embed=_summary(name, r), files=files, view=ResultView(name, raw, r, follow=follow), mention_author=False)
@@ -330,7 +346,7 @@ class FetchView(JobView):
     async def deob(self, inter, _):
         await inter.response.defer(thinking=True)
         r = await _job(deobfuscate, self.raw, fetch=FETCH)
-        await inter.followup.send(embed=_summary(self.name, r), file=_file(r.best, "deobf_" + self.name), view=ResultView(self.name, self.raw, r))
+        await inter.followup.send(embed=_summary(self.name, r), file=_result_file(self.name, r), view=ResultView(self.name, self.raw, r))
 
     @discord.ui.button(label="Env Log", emoji="🧾", style=discord.ButtonStyle.secondary)
     async def envlog(self, inter, _):
@@ -359,7 +375,7 @@ async def envlog_cmd(ctx, *, arg=""):
     name, text = pick_final(files)
     async with ctx.typing():
         r = await _job(deobfuscate, text, fetch=FETCH)
-    await ctx.reply("analysed deepest capture: **%s** (%d file(s) uploaded)" % (name, len(files)), embed=_summary(name, r), file=_file(r.best, "deobf_" + name), view=ResultView(name, text, r), mention_author=False)
+    await ctx.reply("analysed deepest capture: **%s** (%d file(s) uploaded)" % (name, len(files)), embed=_summary(name, r), file=_result_file(name, r), view=ResultView(name, text, r), mention_author=False)
 
 
 @bot.command(name="engines")

@@ -10,11 +10,11 @@ MAX_FETCH = 8
 MAX_CLEAN_BYTES = 400_000
 MAX_SOURCE_BYTES = 2 * 1024 * 1024
 
-HEADER = "-- Deobfuscated by A3K Deobfuscator"
+HEADER = "-- Analyzed by A3K Deobfuscator"
 
 
-def with_header(text):
-    return HEADER + "\n" + text
+def with_header(text, output_kind=None):
+    return HEADER + (" | " + output_kind if output_kind else "") + "\n" + text
 from .detect import BY_NAME, detect, obfuscation_score
 
 
@@ -59,7 +59,10 @@ class Result:
     @property
     def best(self):
         """Readable output: recovered source, or the code the script ran when a vm payload never reaches loadstring."""
-        return with_header(self.body)
+        warning = ""
+        if self.recovery_status == "not-recovered":
+            warning = "-- Readable source was not recovered. The source below is retained for analysis.\n"
+        return with_header(warning + self.body, self.output_kind)
 
     @property
     def is_logger(self):
@@ -73,13 +76,25 @@ class Result:
             return "behavior-trace"
         if self.unresolved_urls:
             return "partial-source"
+        if self.obf_after >= 25:
+            return "still-obfuscated-source"
         if self.layers:
             return "unwrapped-source"
         return "cleaned-source" if self.changed else "unchanged-source"
 
+    @property
+    def recovery_status(self):
+        if self.output_kind in ("unexecuted-source", "still-obfuscated-source"):
+            return "not-recovered"
+        if self.shows_recon:
+            return "behavior-only"
+        if self.unresolved_urls or self.stop_reason != "complete":
+            return "partial"
+        return "source-output" if self.changed or self.layers else "unchanged"
+
     def to_report(self):
         report = asdict(self)
-        report.update(output_kind=self.output_kind, score_kind="heuristic evidence, not probability")
+        report.update(output_kind=self.output_kind, recovery_status=self.recovery_status, score_kind="heuristic evidence, not probability")
         return report
 
 
@@ -244,6 +259,8 @@ def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
     res.source = cur
     res.changed = cur != original
     res.obf_after = obfuscation_score(cur)
+    if res.output_kind == "still-obfuscated-source":
+        res.notes.append("readable source was not recovered; remaining source still has obfuscation indicators")
     res.findings = logger.scan(cur)
     blob = "\n".join([res.recon] + ["-- url: " + u for u in res.urls] + res.constants + res.posts)
     merged = {}
@@ -258,7 +275,7 @@ def reconstruct(r):
     """Observable behaviour of a sandbox run as a pseudo-Luau script."""
     if not (r.trace or r.urls or r.constants or r.captures or r.posts):
         return ""
-    out = ["-- reconstructed observable behaviour (api calls the script made, in order)"]
+    out = ["-- reconstructed observable behaviour (partial observations, not original source)"]
     for u in r.urls:
         out.append("-- url: " + u)
     for u in r.unresolved_gets:

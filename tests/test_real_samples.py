@@ -66,7 +66,7 @@ def test_vm_output_preserves_its_trace_label_and_calls():
 def test_header_is_first_line_and_utf8_safe():
     r = deobfuscate(load("herc_web_162_congrats.lua"))
     first = r.best.encode("latin-1").decode("utf-8").splitlines()[0]
-    assert first == "-- Deobfuscated by A3K Deobfuscator"
+    assert first == "-- Analyzed by A3K Deobfuscator | behavior-trace"
 
 
 HARD_MARKERS = ['Instance.new("ScreenGui")', "RiftHub", "MouseButton1Click", "SendNotification", "E pressed", '"tick", 3', "after wait inside pcall", "Humanoid.Health = 100"]

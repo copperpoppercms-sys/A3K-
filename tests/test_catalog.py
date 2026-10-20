@@ -67,7 +67,7 @@ def test_all_profiles_can_attempt_static_layer_recovery(name):
     r = deobfuscate('return loadstring("print(42)")()', engine=name, dynamic=False)
     assert r.engine == name
     assert r.layers == 1 and r.source == "print(42)"
-    assert r.best.startswith(HEADER + "\n")
+    assert r.best.startswith(HEADER + " | unwrapped-source\n")
 
 
 def test_unknown_input_does_not_invent_a_producer():

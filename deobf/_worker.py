@@ -415,7 +415,7 @@ env.clonefunction = function(f) return f end
 env.messagebox = function(...) T(call_text("messagebox", {n = select("#", ...), ...})) return 1 end
 env.shared, env._G, env._VERSION = {}, {}, "Luau"
 env._G._G = env._G
-for _, k in ipairs({"game", "workspace", "script", "Instance", "Vector3", "Vector2", "CFrame", "Color3", "BrickColor", "UDim2", "UDim", "Enum", "Ray", "Random", "TweenInfo", "NumberSequence", "ColorSequence", "Rect", "Region3", "Drawing", "task", "Players", "RunService", "UserInputService", "HttpService", "TweenService", "Lighting", "ReplicatedStorage", "StarterGui", "CoreGui", "TeleportService", "MarketplaceService", "Stats", "Workspace"}) do
+for _, k in ipairs({"game", "workspace", "script", "Instance", "Vector3", "Vector2", "CFrame", "Color3", "BrickColor", "UDim2", "UDim", "Enum", "Ray", "Random", "TweenInfo", "NumberSequence", "NumberSequenceKeypoint", "ColorSequence", "ColorSequenceKeypoint", "Rect", "Region3", "Drawing", "task", "Players", "RunService", "UserInputService", "HttpService", "TweenService", "Lighting", "ReplicatedStorage", "StarterGui", "CoreGui", "TeleportService", "MarketplaceService", "Stats", "Workspace"}) do
   env[k] = mk(k)
 end
 env.task = {wait = env.wait, spawn = env.spawn, delay = env.delay, defer = function(f, ...) return later(f, ...) end, cancel = function() end}
