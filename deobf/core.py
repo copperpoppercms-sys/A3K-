@@ -2,7 +2,9 @@
 from dataclasses import asdict, dataclass, field
 from time import monotonic
 
-from . import astclean, bytecode, decrypt, logger, passes, patches, recon, sandbox
+import re
+
+from . import astclean, bytecode, decrypt, deepstack, devirt, logger, luaast, passes, patches, recon, sandbox
 from . import fetch as fetchmod
 from .budget import remaining, time_budget
 
@@ -56,7 +58,8 @@ class Result:
     @property
     def shows_recon(self):
         vm = BY_NAME.get(self.payload_engine) and BY_NAME[self.payload_engine].vm
-        return bool(self.recon and (vm or self.obf_after >= 25))
+        lifted = any(h.get("method") == "devirtualized" for h in self.layer_history)
+        return bool(self.recon and (vm or (self.obf_after >= 25 and not lifted)))
 
     @property
     def body(self):
@@ -129,6 +132,29 @@ def deobfuscate(src, engine=None, dynamic=True, max_layers=8, seconds=10, fetch=
     return result
 
 
+def _behaviour(src, seconds):
+    run = sandbox.run(patches.apply(src)[0], seconds)
+    return (run.trace, run.prints, re.sub(r"obf:\d+:|:\d+:", ":N:", run.error))
+
+
+def _try_devirtualize(cur, seconds, res):
+    """Replace an interpreter loop by the program it runs; only accepted when the lifted program behaves the same."""
+    try:
+        lifted = deepstack.call(devirt.devirtualize, cur, seconds)
+    except (devirt.DevirtError, luaast.ParseError, RecursionError, KeyError, IndexError, ValueError, TypeError) as e:
+        if "no interpreter loop" not in str(e):
+            res.notes.append("devirtualization skipped: %s" % e)
+        return None
+    if len(lifted) > MAX_SOURCE_BYTES:
+        res.notes.append("devirtualized program exceeds the size limit; kept the original")
+        return None
+    if _behaviour(cur, seconds) != _behaviour(lifted, seconds):
+        res.notes.append("devirtualized program behaved differently from the original; kept the original")
+        return None
+    res.notes.append("devirtualized the interpreter loop: the vm's own handlers were specialised to its program (verified by re-running both)")
+    return lifted
+
+
 def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
     """fetch=True lets scripts that `loadstring(game:HttpGet(url))()` pull their next stage: the url is downloaded
     by this process (public addresses only, see fetch.py) and handed to the sandbox as the HttpGet result."""
@@ -194,6 +220,11 @@ def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
             continue
         if not dynamic:
             break
+        if devirt.looks_like_vm(cur) and remaining() > 8:
+            lifted = _try_devirtualize(cur, seconds, res)
+            if lifted is not None and advance(lifted, "devirtualized"):
+                cur, ran = lifted, None
+                continue
         exec_src, fixed = patches.apply(cur)
         for name in fixed:
             note = "patched obfuscator bug: " + name
@@ -286,7 +317,7 @@ def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
     if dynamic and remaining() > 0 and not unresolved:
         vm_engine = BY_NAME.get(res.payload_engine) and BY_NAME[res.payload_engine].vm
         if not vm_engine and len(cur) < MAX_CLEAN_BYTES:
-            cleaned, info = astclean.clean(cur, seconds=seconds)
+            cleaned, info = deepstack.call(astclean.clean, cur, seconds=seconds)
             if cleaned is None:
                 res.notes.append("ast cleanup skipped: " + info)
             elif info["nodes_after"] <= 0.85 * info["nodes_before"] or info["renamed"] >= 3 or info["evaluated"]:

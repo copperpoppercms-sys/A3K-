@@ -495,6 +495,41 @@ env.getidentity, env.getthreadcontext = env.getthreadidentity, env.getthreadiden
 env.getrawmetatable = function(o) return getmetatable(o) or {} end
 env.clonefunction = function(f) return f end
 env.messagebox = function(...) T(call_text("messagebox", {n = select("#", ...), ...})) return 1 end
+-- hand a deserialized vm chunk (instructions, constants, nested protos) to the analyser as a table constructor
+local vm_dumped = false
+env.__VMDUMP = function(chunk)
+  if vm_dumped then return end
+  vm_dumped = true
+  local parts, seen, count = {}, {}, 0
+  local function ser(v, depth)
+    local t = type(v)
+    if t == "string" then parts[#parts + 1] = string.format("%q", v)
+    elseif t == "number" then
+      parts[#parts + 1] = (v ~= v) and "(0/0)" or (v == math.huge and "(1/0)") or (v == -math.huge and "(-1/0)") or string.format("%.17g", v)
+    elseif t == "boolean" then parts[#parts + 1] = tostring(v)
+    elseif t == "table" and depth < 40 and not seen[v] then
+      seen[v] = true
+      parts[#parts + 1] = "{"
+      for k, x in pairs(v) do
+        count = count + 1
+        if count > 4000000 then error("vm chunk too large", 0) end
+        if type(k) == "number" or type(k) == "string" then
+          parts[#parts + 1] = "["
+          ser(k, depth + 1)
+          parts[#parts + 1] = "]="
+          ser(x, depth + 1)
+          parts[#parts + 1] = ";"
+        end
+      end
+      parts[#parts + 1] = "}"
+      seen[v] = nil
+    else
+      parts[#parts + 1] = "nil"
+    end
+  end
+  ser(chunk, 0)
+  emit("vmchunk", table.concat(parts))
+end
 env.shared, env._G, env._VERSION = {}, {}, "Luau"
 env._G._G = env._G
 for _, k in ipairs({"game", "workspace", "script", "Instance", "Vector3", "Vector2", "CFrame", "Color3", "BrickColor", "UDim2", "UDim", "Enum", "Ray", "Random", "TweenInfo", "NumberSequence", "NumberSequenceKeypoint", "ColorSequence", "ColorSequenceKeypoint", "Rect", "Region3", "Drawing", "task", "Players", "RunService", "UserInputService", "HttpService", "TweenService", "Lighting", "ReplicatedStorage", "StarterGui", "CoreGui", "TeleportService", "MarketplaceService", "Stats", "Workspace"}) do

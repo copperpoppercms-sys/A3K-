@@ -25,6 +25,25 @@ def test_translation_preserves_output(name):
     assert run_plain(decompile.translate(dump(src))) == run_plain(src)
 
 
+@pytest.mark.parametrize("name", sorted(ALL))
+def test_structured_decompile_preserves_output(name):
+    src = ALL[name]
+    assert run_plain(decompile.decompile(dump(src))) == run_plain(src)
+
+
+def test_structured_decompile_has_no_dispatch_loop_for_ordinary_code():
+    out = decompile.decompile(dump(PROGRAMS["nested_breaks"]))
+    assert "pc ==" not in out and "while true do" in out
+
+
+def test_random_programs_structure_and_round_trip():
+    for gen, seed in ((_gen_program, 21), (_gen_program2, 22)):
+        rng = random.Random(seed)
+        for n in range(80):
+            src = gen(rng)
+            assert run_plain(decompile.decompile(dump(src))) == run_plain(src), "%s program %d\n%s" % (gen.__name__, n, src)
+
+
 def test_random_programs_survive_bytecode_round_trip():
     for gen, seed in ((_gen_program, 11), (_gen_program2, 12)):
         rng = random.Random(seed)

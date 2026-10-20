@@ -358,5 +358,13 @@ def translate(chunk):
 
 
 def decompile(chunk):
-    """Bytecode (bytes) -> Lua source text."""
-    return translate(chunk)
+    """Bytecode (bytes) -> Lua source text, structured (if/while) where the control flow allows it."""
+    from . import luaast, structure
+
+    text = translate(chunk)
+    try:
+        ast = luaast.parse(text)
+        structure.lift_dispatch_loops(ast)
+        return luaast.dump(ast)
+    except (luaast.ParseError, structure.StructureError, RecursionError):
+        return text

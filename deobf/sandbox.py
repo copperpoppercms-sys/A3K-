@@ -15,6 +15,7 @@ _WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_worker.py")
 @dataclass
 class Run:
     captures: list = field(default_factory=list)  # loadstring/load chunks, in order
+    vmchunks: list = field(default_factory=list)  # deserialized vm chunks dumped by an instrumented vm (devirtualizer)
     bincaptures: list = field(default_factory=list)  # binary (bytecode) chunks handed to loadstring; never executed
     trace: list = field(default_factory=list)  # recorded API calls
     urls: list = field(default_factory=list)
@@ -114,6 +115,8 @@ def run(source, seconds=10, queries=None, http=None):
             r.posts.append(v)
         elif k == "bincapture":
             r.bincaptures.append(v)
+        elif k == "vmchunk":
+            r.vmchunks.append(v)
         elif k == "dec":
             d = _parse_dec(v)
             if d:
