@@ -2,7 +2,7 @@
 from dataclasses import asdict, dataclass, field
 from time import monotonic
 
-from . import astclean, decrypt, logger, passes, patches, recon, sandbox
+from . import astclean, bytecode, decrypt, logger, passes, patches, recon, sandbox
 from . import fetch as fetchmod
 from .budget import remaining, time_budget
 
@@ -184,6 +184,14 @@ def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
             cur, ran = inner, None
             res.notes.append("unwrapped literal loadstring")
             continue
+        carved = bytecode.carve_best(cur)
+        if carved is not None:
+            inner, info = carved
+            if not advance(inner, "bytecode"):
+                break
+            cur, ran = inner, None
+            res.notes.append("decompiled embedded Lua bytecode (%s)" % info)
+            continue
         if not dynamic:
             break
         exec_src, fixed = patches.apply(cur)
@@ -210,6 +218,17 @@ def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
             ran = sandbox.run(exec_src, seconds, http=http)
             res.compatibility += [note for note in ran.compatibility if note not in res.compatibility]
             findings.extend(logger.scan_runtime("\n".join(ran.urls + ran.posts + ran.constants)))
+        if ran.bincaptures and not ran.captures:
+            try:
+                inner = bytecode.to_source(ran.bincaptures[-1].encode("latin-1"))
+            except Exception as e:
+                res.notes.append("loadstring received bytecode that could not be decompiled: %s" % e)
+            else:
+                size = len(ran.bincaptures[-1])
+                if advance(inner, "bytecode-capture"):
+                    cur, ran = inner, None
+                    res.notes.append("decompiled bytecode passed to loadstring (%d bytes)" % size)
+                    continue
         unresolved.extend(url for url in ran.unresolved_gets if url not in unresolved)
         if ran.unresolved_gets and ran.captures and not ran.captures[-1].strip():
             res.stop_reason = "unresolved-http"

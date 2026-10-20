@@ -15,6 +15,7 @@ _WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_worker.py")
 @dataclass
 class Run:
     captures: list = field(default_factory=list)  # loadstring/load chunks, in order
+    bincaptures: list = field(default_factory=list)  # binary (bytecode) chunks handed to loadstring; never executed
     trace: list = field(default_factory=list)  # recorded API calls
     urls: list = field(default_factory=list)
     gets: list = field(default_factory=list)  # urls fetched through HttpGet / GET request()
@@ -111,6 +112,8 @@ def run(source, seconds=10, queries=None, http=None):
                 r.gets.append(v)
         elif k == "post":
             r.posts.append(v)
+        elif k == "bincapture":
+            r.bincaptures.append(v)
         elif k == "dec":
             d = _parse_dec(v)
             if d:

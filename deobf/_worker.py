@@ -203,7 +203,7 @@ end
 
 local function capture_load(s, chunkname)
   if type(s) ~= "string" then return nil, "bad chunk" end
-  if s:byte(1) == 27 then return nil, "binary chunks are rejected" end
+  if s:byte(1) == 27 then emit("bincapture", s) return nil, "binary chunks are rejected" end
   emit("capture", s)
   local f, err = real_loadstring(s, chunkname)
   if f then real_setfenv(f, env) end
