@@ -144,26 +144,30 @@ def _operand(text):
     return "(" + text + ")"
 
 
-def prepare(source):
+def _prepare_operators(source):
     """Return a lowered sandbox copy and notes; retain original on parse failure.
 
     Not full Luau/Lua 5.3 support: integer precision beyond 2**53 is not emulated,
     and zero divisors are rejected. Unrelated syntax is not rewritten.
     """
+    if source.startswith("\x1b"):
+        return source, []
+    source, count = passes.normalize_numbers(source)
+    numeric_notes = ["lowered %d Luau numeric literal(s) in sandbox copy" % count] if count else []
     operator_re = re.compile(r"//|(?:\+|-|\*|/|%|\^|\.\.)=")
-    if source.startswith("\x1b") or not operator_re.search(source):
-        return source, []
+    if not operator_re.search(source):
+        return source, numeric_notes
     if not any(operator_re.search(text) for kind, text in passes.lua_split(source) if kind == "other"):
-        return source, []
+        return source, numeric_notes
     if len(source) > 2 * 1024 * 1024:
-        return source, ["operator compatibility skipped: input exceeds 2 MB"]
+        return source, numeric_notes + ["operator compatibility skipped: input exceeds 2 MB"]
     try:
         parser = SpanParser(source)
         parser.parse_chunk()
     except (a.ParseError, ValueError, OverflowError, RecursionError) as e:
-        return source, ["operator compatibility unavailable: " + str(e)[:150]]
+        return source, numeric_notes + ["operator compatibility unavailable: " + str(e)[:150]]
     if not parser.floor_spans and not parser.compound_spans:
-        return source, []
+        return source, numeric_notes
     reserved = {token[1] for token in parser.toks if token[0] == "name"}
     def fresh(base):
         name, suffix = base, 0
@@ -202,9 +206,151 @@ def prepare(source):
         edits = [edit for edit in edits if not (span.start <= edit[0] and edit[1] <= span.end)]
         edits.append((span.start, span.end, text))
     lowered = (_HELPER.format(name=name) if need_floor else "") + _splice(source, 0, len(source), edits)
-    notes = []
+    notes = numeric_notes
     if parser.floor_spans:
         notes.append("lowered %d floor-division operator(s) in sandbox copy (double precision)" % len(parser.floor_spans))
     if parser.compound_spans:
         notes.append("lowered %d compound-assignment operator(s) in sandbox copy" % len(parser.compound_spans))
     return lowered, notes
+
+
+class ContinueParser(a.Parser):
+    """Track lexical loop bodies and jumps without reprinting the input AST."""
+    def __init__(self, source):
+        super().__init__(source)
+        self.blocks, self.loops, self.jumps = {}, [], []
+        self.iterations = []
+
+    def forstat(self):
+        start = self.p
+        node = super().forstat()
+        if isinstance(node, a.GenFor):
+            body_start = self.blocks[id(node.body)][0]
+            header = [token for token in self.toks[start:self.p] if token[2] < body_start]
+            opening = next(token for token in header if token[:2] == ("kw", "in"))
+            closing = next(token for token in reversed(header) if token[:2] == ("kw", "do"))
+            self.iterations.append((opening[2] + 2, closing[2]))
+        return node
+
+    def block(self, scope=True):
+        start = self.peek()[2]
+        body = super().block(scope)
+        self.blocks[id(body)] = (start, self.peek()[2])
+        return body
+
+    def statement(self):
+        token = self.peek()
+        node = super().statement()
+        if isinstance(node, (a.While, a.NumFor, a.GenFor, a.Repeat)):
+            start, end = self.blocks[id(node.body)]
+            unsafe_repeat = False
+            if isinstance(node, a.Repeat):
+                locals_ = {var for stmt in node.body if isinstance(stmt, a.LocalStmt) for var in stmt.vars}
+                locals_.update(stmt.var for stmt in node.body if isinstance(stmt, a.LocalFunc))
+                def reads_body_local(value):
+                    if isinstance(value, a.Name):
+                        return getattr(value, "local") in locals_
+                    if isinstance(value, a.Node):
+                        return any(reads_body_local(getattr(value, field)) for field in value.__slots__)
+                    if isinstance(value, (list, tuple)):
+                        return any(reads_body_local(item) for item in value)
+                    return False
+                unsafe_repeat = reads_body_local(node.cond)
+            self.loops.append((start, end, self.func, unsafe_repeat))
+        elif isinstance(node, (a.Break, a.Continue)):
+            self.jumps.append((token[2], token[2] + len(token[1]), self.func, isinstance(node, a.Continue)))
+        return node
+
+
+def _prepare_continue(source):
+    if not re.search(r"\bcontinue\b", source):
+        return source, []
+    if not any(re.search(r"\bcontinue\b", text) for kind, text in passes.lua_split(source) if kind == "other"):
+        return source, []
+    try:
+        parser = ContinueParser(source)
+        tree = parser.parse_chunk()  # Keep AST bodies alive while their spans are used.
+        reserved = {token[1] for token in parser.toks if token[0] == "name"}
+        by_loop = {}
+        for jump in parser.jumps:
+            start, end, function, continuing = jump
+            owners = [loop for loop in parser.loops if loop[2] == function and loop[0] <= start < loop[1]]
+            if not owners:
+                if continuing:
+                    raise a.ParseError("continue outside a lexical loop")
+                continue
+            owner = min(owners, key=lambda loop: loop[1] - loop[0])
+            by_loop.setdefault(owner, []).append(jump)
+        edits, count = [], 0
+        for loop, jumps in by_loop.items():
+            continues = [jump for jump in jumps if jump[3]]
+            if not continues:
+                continue
+            if loop[3]:
+                # Repeat conditions can read locals declared inside the body;
+                # wrapping that body would change their lexical scope.
+                raise a.ParseError("continue in repeat/until is not supported")
+            count += len(continues)
+            if count > 256:
+                raise a.ParseError("continue statement limit (256)")
+            name = "__a3k_loop_break"
+            while name in reserved:
+                name += "_"
+            reserved.add(name)
+            edits.append((loop[0], loop[0], "local %s=false; repeat " % name))
+            edits.append((loop[1], loop[1], " until true; if %s then break end; " % name))
+            for start, end, _, continuing in jumps:
+                edits.append((start, end, "do break end" if continuing else "do %s=true; break end" % name))
+        # Insert a wrapper before a jump when both start at the same position.
+        # Operator splicing deliberately prefers outer replacements instead.
+        parts, cursor = [], 0
+        for start, end, replacement in sorted(edits, key=lambda edit: (edit[0], edit[1])):
+            parts.extend((source[cursor:start], replacement))
+            cursor = end
+        parts.append(source[cursor:])
+        return "".join(parts), ["lowered %d continue statement(s) in sandbox copy" % count] if count else []
+    except (a.ParseError, ValueError, OverflowError, RecursionError) as exc:
+        return source, ["continue compatibility unavailable: " + str(exc)[:150]]
+
+
+def prepare(source):
+    if len(source) > 2 * 1024 * 1024:
+        return source, ["compatibility skipped: input exceeds 2 MB"]
+    lowered, notes = _prepare_operators(source)
+    lowered, continue_notes = _prepare_continue(lowered)
+    lowered, iteration_notes = _prepare_iteration(lowered)
+    return lowered, notes + continue_notes + iteration_notes
+
+
+def _prepare_iteration(source):
+    if not re.search(r"\bfor\b", source) or not re.search(r"\bin\b", source):
+        return source, []
+    try:
+        parser = ContinueParser(source)
+        tree = parser.parse_chunk()
+        if not parser.iterations:
+            return source, []
+        if len(parser.iterations) > 256:
+            raise a.ParseError("generic iteration limit (256)")
+        reserved = {token[1] for token in parser.toks if token[0] == "name"}
+        name = "__a3k_iter"
+        while name in reserved:
+            name += "_"
+        helper = (
+            "local %s=(function(typ,mt,nxt,sel,err) return function(...) "
+            "local value=(...); if typ(value)=='table' and sel('#',...)==1 then "
+            "local m=mt(value); if m~=nil and typ(m)~='table' then err('sandbox: protected iteration metatable unsupported',2) end; "
+            "if m and m.__iter~=nil then return m.__iter(value) end; "
+            "if not(m and m.__call) then return nxt,value,nil end end; return ... end "
+            "end)(type,getmetatable,next,select,error); " % name
+        )
+        # Header expression ranges may nest (an iterator can be an IIFE).
+        edits = []
+        for start, end in sorted(parser.iterations, key=lambda span: span[1] - span[0]):
+            expr = _splice(source, start, end, edits)
+            replacement = " " + name + "(" + expr + ") "
+            edits = [edit for edit in edits if not (start <= edit[0] and edit[1] <= end)]
+            edits.append((start, end, replacement))
+        return helper + _splice(source, 0, len(source), edits), ["lowered %d generic iteration header(s) in sandbox copy" % len(parser.iterations)]
+    except (a.ParseError, ValueError, OverflowError, RecursionError) as exc:
+        return source, ["iteration compatibility unavailable: " + str(exc)[:150]]

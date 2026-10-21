@@ -4,6 +4,33 @@ import re
 _LONG_OPEN = re.compile(r"\[(=*)\[")
 _KEYWORDS = {"return", "and", "or", "not", "then", "do", "else", "in", "until", "if", "while", "elseif", "local"}
 
+# Numeric separators and binary literals are Luau syntax. Match a whole token,
+# never a valid prefix of an invalid number or a fragment of an identifier.
+NUMBER_PATTERN = (
+    r"(?:0[xX][0-9a-fA-F][0-9a-fA-F_]*(?:\.[0-9a-fA-F_]*)?(?:[pP][+-]?[0-9][0-9_]*)?"
+    r"|0[bB][01][01_]*|[0-9][0-9_]*(?:\.[0-9_]*)?(?:[eE][+-]?[0-9][0-9_]*)?"
+    r"|\.[0-9][0-9_]*(?:[eE][+-]?[0-9][0-9_]*)?)"
+)
+_LUAU_NUMBER = re.compile(r"(?<![\w.])" + NUMBER_PATTERN + r"(?![\w])", re.ASCII)
+
+
+def normalize_numbers(src):
+    """Lower Luau literals without touching strings, comments, or line counts."""
+    count = 0
+    def replace(match):
+        nonlocal count
+        text = match.group(0)
+        if "_" not in text and text[:2].lower() != "0b":
+            return text
+        clean = text.replace("_", "")
+        if len(clean) > 256:
+            return text  # Bound integer conversion on untrusted input.
+        if clean[:2].lower() == "0b":
+            clean = str(int(clean[2:], 2))
+        count += 1
+        return clean
+    return _map_other(src, lambda text: _LUAU_NUMBER.sub(replace, text)), count
+
 
 def lua_split(src):
     """Split source into ('str'|'comment'|'other', text) tokens."""
@@ -327,6 +354,7 @@ def _fold_arith(t):
 
 
 def p_numbers(src):
+    src, _ = normalize_numbers(src)
     return _map_other(src, lambda t: _fold_arith(_HEX_RE.sub(lambda m: str(int(m.group(1), 16)) if len(m.group(1)) <= 64 else m.group(0), t)))
 
 

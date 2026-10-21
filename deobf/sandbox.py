@@ -132,6 +132,8 @@ def run(source, seconds=10, queries=None, http=None):
             r.error = v
         elif k == "done":
             r.completed = True
+        elif k == "execution_limit":
+            r.timed_out = True
         elif k == "callback_run":
             r.callback_runs.append(v)
         elif k == "callback_capture":
@@ -142,7 +144,7 @@ def run(source, seconds=10, queries=None, http=None):
             r.assumptions.append(v)
         elif k == "simulation_limit" and v not in r.simulation_limits:
             r.simulation_limits.append(v)
-    if timed_out:
+    if r.timed_out:
         r.error = r.error or "sandbox: wall-clock limit"
     elif not r.completed and not r.error:
         r.error = "sandbox worker exited without a completion event"

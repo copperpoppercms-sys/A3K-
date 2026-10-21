@@ -106,7 +106,15 @@ GUI behavior trace after compound-assignment compatibility and sequence-keypoint
 stubs were added. Its original source was not recovered; the watermark does not
 prove who produced it. The third-party script is not included in this repository.
 
-Not tested against real output (no samples reachable): Luraph (any version), MoonSec, Moonveil, IronVeil, MWP, Luast. They go through the same pipeline, but "works on every Luraph" is **not** claimed - Luraph changes its VM between releases and may detect the sandbox. Send real samples to extend this table.
+A user-provided sample identifying itself as **Luraph v14.9** has now been tested.
+Luau numeric literals, `continue`, generalized table iteration, bit counters and
+bounded buffer reads let it pass its initial syntax/runtime failures. It exposes
+31 strings, but reaches the execution budget without recovering readable source
+or observing payload API actions. **No Luraph VM decompiler is implemented.**
+See [the sample investigation](docs/luraph-14.9-investigation.md) for evidence.
+
+Not tested against real output: MoonSec, Moonveil, IronVeil, MWP, Luast. Detector
+profiles use the same best-effort pipeline and are not dedicated VM decompilers.
 
 Also covered by tests: a gui script with button callbacks, input handlers, spawned loops, `wait()` inside `pcall`, `Heartbeat` and an infinite loop, obfuscated with Prometheus Strong, IronBrew 2 (string encryption) and Hercules heavy, plus IronBrew 2 layered over Prometheus. A third-party sample (Rerubi VM loader from an archived obfuscator repo) also recovers correctly.
 
@@ -127,7 +135,7 @@ Roblox runtime. Cross-signal interaction sequences and every possible input are
 not reconstructed. `--fetch` / `.keydeobf` additionally retrieves public HttpGet
 downloads under the existing limits.
 
-Limits: VM-based protectors (Luraph, IronBrew, MoonSec, ...) may never hand their payload to `loadstring`, so results can be a behavior trace (`.l`) rather than source. Unsupported Luau syntax (`continue`, type annotations) still does not compile in the Lua 5.1 sandbox; static passes run and the dynamic stage reports a syntax error. Traces contain only observations from the bounded sandbox run and simulated callbacks; they are not guaranteed complete or runnable scripts. Signatures are heuristics.
+Limits: VM-based protectors (Luraph, IronBrew, MoonSec, ...) may never hand their payload to `loadstring`, so results can be a behavior trace (`.l`) rather than source. Type annotations remain unsupported. `continue` is lowered in while/for loops and repeat loops whose conditions do not read body-local variables; other repeat cases remain explicit compatibility failures. Generic table iteration supports ordinary tables, callable tables and unprotected `__iter` metatables. Buffer support covers bounded integer reads/writes, float reads, strings, copying and filling, with a 1 MB allocation limit; float writes and bit-level buffer APIs are not implemented. Traces contain only observations from the bounded sandbox run and simulated callbacks; they are not guaranteed complete or runnable scripts. Signatures are heuristics.
 
 ## Run
 

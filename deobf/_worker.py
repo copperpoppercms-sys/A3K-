@@ -336,7 +336,120 @@ b32.arshift = function(a, n) a = n32(a) local r = b32.rshift(a, n) if a >= 21474
 b32.lrotate = function(a, n) n = n % 32 return b32.bor(b32.lshift(a, n), b32.rshift(a, 32 - n)) end
 b32.rrotate = function(a, n) return b32.lrotate(a, -n) end
 b32.extract = function(a, f, w) return b32.band(b32.rshift(a, f), 2 ^ (w or 1) - 1) end
+b32.countlz = function(a)
+  a = math.floor(n32(a))
+  if a == 0 then return 32 end
+  local count, bit = 0, 2147483648
+  while a < bit do count, bit = count + 1, bit / 2 end
+  return count
+end
+b32.countrz = function(a)
+  a = math.floor(n32(a))
+  if a == 0 then return 32 end
+  local count = 0
+  while a % 2 == 0 do count, a = count + 1, a / 2 end
+  return count
+end
 env.bit32, env.bit = b32, b32
+-- Luau buffers are local byte arrays; they never refer to host memory or files.
+local buffers = setmetatable({}, {__mode = "k"})
+local bufferlib = {}
+local function buffer_range(b, offset, size)
+  local data = buffers[b]
+  if not data then error("buffer expected", 3) end
+  if type(offset) ~= "number" or offset ~= math.floor(offset) or offset < 0 or
+     type(size) ~= "number" or size ~= math.floor(size) or size < 0 or offset + size > data.n then
+    error("buffer access out of bounds", 3)
+  end
+  return data
+end
+bufferlib.create = function(size)
+  if type(size) ~= "number" or size ~= math.floor(size) or size < 0 or size > 1048576 then
+    error("sandbox: invalid buffer size (maximum 1 MB)", 2)
+  end
+  local b = newproxy(false)
+  buffers[b] = {n = size}
+  values[b] = {kind = "buffer"}
+  return b
+end
+bufferlib.len = function(b) return buffer_range(b, 0, 0).n end
+bufferlib.fromstring = function(s)
+  if type(s) ~= "string" then error("string expected", 2) end
+  local b = bufferlib.create(#s)
+  local data = buffers[b]
+  for i = 1, #s do data[i] = real_str.byte(s, i) end
+  return b
+end
+bufferlib.readstring = function(b, offset, size)
+  local data, out = buffer_range(b, offset, size), {}
+  for i = 1, size do out[i] = real_str.char(data[offset + i] or 0) end
+  return note_const(real_concat(out))
+end
+bufferlib.tostring = function(b) return bufferlib.readstring(b, 0, bufferlib.len(b)) end
+bufferlib.writestring = function(b, offset, text, size)
+  if type(text) ~= "string" then error("string expected", 2) end
+  size = size or #text
+  if size > #text then error("buffer source string too short", 2) end
+  local data = buffer_range(b, offset, size)
+  for i = 1, size do data[offset + i] = real_str.byte(text, i) end
+end
+bufferlib.fill = function(b, offset, value, size)
+  local data = buffer_range(b, offset, 0)
+  size = size or (data.n - offset)
+  buffer_range(b, offset, size)
+  value = math.floor(value) % 256
+  for i = 1, size do data[offset + i] = value end
+end
+bufferlib.copy = function(target, to, source, from, size)
+  from = from or 0
+  local src = buffer_range(source, from, 0)
+  size = size or (src.n - from)
+  buffer_range(source, from, size)
+  local dst = buffer_range(target, to, size)
+  if target == source and to > from then
+    for i = size, 1, -1 do dst[to + i] = src[from + i] end
+  else
+    for i = 1, size do dst[to + i] = src[from + i] end
+  end
+end
+local function read_uint(b, offset, size)
+  local data, value = buffer_range(b, offset, size), 0
+  for i = size, 1, -1 do value = value * 256 + (data[offset + i] or 0) end
+  return value
+end
+local function write_uint(b, offset, value, size)
+  local data = buffer_range(b, offset, size)
+  if type(value) ~= "number" or value ~= value or math.abs(value) == math.huge then error("finite number expected", 3) end
+  value = math.floor(value) % 2 ^ (size * 8)
+  for i = 1, size do data[offset + i], value = value % 256, math.floor(value / 256) end
+end
+for _, size in ipairs({1, 2, 4}) do
+  local width = size
+  bufferlib["readu" .. width * 8] = function(b, o) return read_uint(b, o, width) end
+  bufferlib["readi" .. width * 8] = function(b, o)
+    local value = read_uint(b, o, width)
+    return value >= 2 ^ (width * 8 - 1) and value - 2 ^ (width * 8) or value
+  end
+  local writer = function(b, o, v) write_uint(b, o, v, width) end
+  bufferlib["writeu" .. width * 8], bufferlib["writei" .. width * 8] = writer, writer
+end
+local function read_float(b, offset, size)
+  local high, fraction, exponent, sign, bias, scale
+  if size == 4 then
+    high = read_uint(b, offset, 4)
+    fraction, exponent, sign, bias, scale = high % 8388608, math.floor(high / 8388608) % 256, high >= 2147483648 and -1 or 1, 127, 8388608
+  else
+    local low = read_uint(b, offset, 4)
+    high = read_uint(b, offset + 4, 4)
+    fraction, exponent, sign, bias, scale = (high % 1048576) * M32 + low, math.floor(high / 1048576) % 2048, high >= 2147483648 and -1 or 1, 1023, 4503599627370496
+  end
+  if exponent == bias * 2 + 1 then return fraction == 0 and sign * math.huge or 0 / 0 end
+  if exponent == 0 then return sign * (fraction / scale) * 2 ^ (1 - bias) end
+  return sign * (1 + fraction / scale) * 2 ^ (exponent - bias)
+end
+bufferlib.readf32 = function(b, offset) return read_float(b, offset, 4) end
+bufferlib.readf64 = function(b, offset) return read_float(b, offset, 8) end
+env.buffer = bufferlib
 local real_debug = debug
 local native = setmetatable({}, {__mode = "k"})
 local function stub_info(f, what)
@@ -545,11 +658,15 @@ local function mark(t, seen)
   end
 end
 mark(env, {})
-for _, k in ipairs({"string", "table", "math", "os", "io", "debug", "coroutine", "bit32", "package"}) do env.package.loaded[k] = env[k] end
+for _, k in ipairs({"string", "table", "math", "os", "io", "debug", "coroutine", "bit32", "buffer", "package"}) do env.package.loaded[k] = env[k] end
 env.package.loaded._G = env
 
+local limit_reported = false
 local hook = function()
-  if real_clock() > DEADLINE then error("sandbox: time limit", 0) end
+  if real_clock() > DEADLINE then
+    if not limit_reported then limit_reported = true; emit("execution_limit", "sandbox CPU budget exhausted") end
+    error("sandbox: time limit", 0)
+  end
 end
 LIMIT = hook
 sethook(hook, "", 10000)

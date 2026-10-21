@@ -77,7 +77,7 @@ Label = _node("Label", "label")
 
 _TOKEN = re.compile(
     r"""(?P<ws>[ \t\r\n]+)
-    |(?P<num>0[xX][0-9a-fA-F]*\.?[0-9a-fA-F]*(?:[pP][+-]?\d+)?|\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?)
+    |(?P<num>""" + passes.NUMBER_PATTERN + r""")
     |(?P<name>[A-Za-z_][A-Za-z0-9_]*)
     |(?P<op>\.\.\.|\.\.=|\.\.|==|~=|!=|<=|>=|::|//=|//|\+=|-=|\*=|/=|%=|\^=|[-+*/%^#<>=(){}\[\];:,.])""",
     re.X,
@@ -146,8 +146,11 @@ def lex(src):
 
 
 def _number(text):
+    text = text.replace("_", "")
     try:
-        if text[:2] in ("0x", "0X"):
+        if text[:2] in ("0b", "0B"):
+            v = int(text[2:], 2)
+        elif text[:2] in ("0x", "0X"):
             if "." in text or "p" in text or "P" in text:
                 return float.fromhex(text)
             v = int(text, 16)

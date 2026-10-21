@@ -287,7 +287,7 @@ def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
         res.recon = reconstruct(ran)
         res.error = ran.error
         if ran.timed_out:
-            res.notes.append("sandbox hit wall-clock limit")
+            res.notes.append("sandbox hit execution time limit")
             res.stop_reason = "time-budget" if remaining() <= 0 else "sandbox-time-limit"
         elif ran.error:
             res.stop_reason = "syntax-error" if ran.error.startswith("syntax:") else "runtime-error"
@@ -313,7 +313,9 @@ def _deobfuscate(src, engine, dynamic, max_layers, seconds, fetch):
             res.engine, res.confidence, res.candidates = e2, c2, r2
     res.payload_engine = _resolve_engine(cur, None)[0]
     if BY_NAME.get(res.payload_engine) and BY_NAME[res.payload_engine].vm:
-        res.notes.append("vm-based protector: payload never reaches loadstring, see the behaviour trace (.l)")
+        res.notes.append("VM-based protector detected; observed strings or behaviour do not establish recovery of its original source")
+        if res.payload_engine == "luraph":
+            res.notes.append("No Luraph VM decompiler is implemented; detection, compatibility lowering, captured loader layers and diagnostic observations are best-effort only")
     if dynamic and remaining() > 0 and not unresolved:
         vm_engine = BY_NAME.get(res.payload_engine) and BY_NAME[res.payload_engine].vm
         if not vm_engine and len(cur) < MAX_CLEAN_BYTES:
